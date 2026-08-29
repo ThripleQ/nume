@@ -39,7 +39,6 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import coil.compose.AsyncImage
 import com.thripleq.nume.core.playback.PlayerHolder
-import com.thripleq.nume.core.repo.DebugFeed
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
@@ -59,11 +58,6 @@ fun PlayerScreen() {
     var errorText by remember { mutableStateOf<String?>(null) }
     var seekPending by remember { mutableStateOf(false) }
     var dragMs by remember { mutableLongStateOf(0L) }
-
-    // Temporary: kick off the debug playback when a DEBUG_SONG_ID is configured.
-    LaunchedEffect(Unit) {
-        DebugFeed.loadAndPlay(context)
-    }
 
     LaunchedEffect(player) {
         val listener = object : Player.Listener {
