@@ -6,19 +6,24 @@ import android.net.Uri
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
-import com.thripleq.nume.Gateway
+import com.thripleq.nume.core.net.NetEaseGateway
 import com.thripleq.nume.core.net.NeteaseOp
 import com.thripleq.nume.core.repo.Track
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
- * Turns a [Track] into a playable [MediaItem] through libnetease and hands it to
- * the shared player. Downstream UI (列表点按、播放页) all funnel through here so
+ * Turns [Track]s into a playable [MediaItem] queue through libnetease and hands it
+ * to the shared player. Downstream UI (列表点按、播放页) all funnel through here so
  * the byte-cache → ExoPlayer path stays in one place.
  */
-object PlaybackLauncher {
+@Singleton
+class PlaybackLauncher @Inject constructor(
+    private val gateway: NetEaseGateway,
+) {
 
     /** Plays a single track; ⏮/⏭ become no-ops since there is no queue. */
     suspend fun play(context: Context, track: Track) =
@@ -75,7 +80,6 @@ object PlaybackLauncher {
         }
 
     private suspend fun songUrl(id: String): String? = withContext(Dispatchers.IO) {
-        val gateway = Gateway.netease
         // exhigh is the flagship quality graded series; fall back to standard if
         // the account / track is not entitled to it (e.g. anon access).
         for (quality in listOf("exhigh", "standard")) {

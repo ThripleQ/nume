@@ -21,22 +21,16 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.thripleq.nume.core.playback.PlaybackLauncher
-import com.thripleq.nume.core.repo.ChartRepository
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.thripleq.nume.core.repo.Track
-import kotlinx.coroutines.launch
-
-private enum class TrackPhase { Loading, Error, Ready }
+import com.thripleq.nume.ui.chart.ChartDetailUiState
+import com.thripleq.nume.ui.chart.ChartDetailViewModel
 
 /** 单个榜单的曲目列表。点一首歌以整榜为队列开始播放。 */
 @Composable
@@ -46,21 +40,12 @@ fun ChartDetailScreen(
     onBack: () -> Unit,
     onOpenPlayer: () -> Unit,
 ) {
-    val context = LocalContext.current.applicationContext
-    val scope = rememberCoroutineScope()
-    var phase by remember { mutableStateOf(TrackPhase.Loading) }
-    var tracks by remember { mutableStateOf<List<Track>>(emptyList()) }
+    val vm: ChartDetailViewModel = hiltViewModel()
+    val state by vm.uiState.collectAsStateWithLifecycle()
 
-    LaunchedEffect(chartId) {
-        phase = TrackPhase.Loading
-        tracks = try {
-            ChartRepository.chartTracks(chartId).also {
-                phase = if (it.isEmpty()) TrackPhase.Error else TrackPhase.Ready
-            }
-        } catch (_: Exception) {
-            phase = TrackPhase.Error
-            emptyList()
-        }
+    LaunchedEffect(chartId) { vm.load(chartId) }
+    LaunchedEffect(Unit) {
+        vm.openPlayer.collect { onOpenPlayer() }
     }
 
     LazyColumn(
@@ -83,8 +68,8 @@ fun ChartDetailScreen(
                 )
             }
             Spacer(Modifier.height(8.dp))
-            when (phase) {
-                TrackPhase.Loading -> Row(
+            when (val s = state) {
+                ChartDetailUiState.Loading -> Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.padding(vertical = 12.dp),
                 ) {
@@ -92,22 +77,18 @@ fun ChartDetailScreen(
                     Spacer(Modifier.width(8.dp))
                     Text("加载曲目中…", style = MaterialTheme.typography.bodySmall)
                 }
-                TrackPhase.Error -> Text(
+                ChartDetailUiState.Error -> Text(
                     "曲目加载失败",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(vertical = 12.dp),
                 )
-                TrackPhase.Ready -> Unit
+                is ChartDetailUiState.Ready -> Unit
             }
         }
+        val tracks = (state as? ChartDetailUiState.Ready)?.tracks ?: emptyList()
         items(tracks, key = { it.id }) { track ->
-            TrackRow(track) {
-                scope.launch {
-                    PlaybackLauncher.play(context, tracks, tracks.indexOf(track))
-                    onOpenPlayer()
-                }
-            }
+            TrackRow(track) { vm.onTrackClick(tracks, tracks.indexOf(track)) }
         }
     }
 }

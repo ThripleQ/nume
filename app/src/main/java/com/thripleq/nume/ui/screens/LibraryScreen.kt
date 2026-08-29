@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,46 +16,42 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.thripleq.nume.core.repo.Chart
-import com.thripleq.nume.core.repo.ChartRepository
-
-private sealed interface LibraryPhase {
-    data object Loading : LibraryPhase
-    data object Error : LibraryPhase
-    data class Charts(val charts: List<Chart>) : LibraryPhase
-}
+import com.thripleq.nume.ui.library.LibraryUiState
+import com.thripleq.nume.ui.library.LibraryViewModel
 
 /** 免登录首页：列出排行榜，点进榜单到 [ChartDetailScreen]。 */
 @Composable
 fun LibraryScreen(onOpenChart: (String, String) -> Unit) {
-    var phase by remember { mutableStateOf<LibraryPhase>(LibraryPhase.Loading) }
+    val vm: LibraryViewModel = hiltViewModel()
+    val state by vm.uiState.collectAsStateWithLifecycle()
 
-    LaunchedEffect(Unit) {
-        phase = LibraryPhase.Loading
-        val charts = ChartRepository.charts()
-        phase = if (charts.isEmpty()) LibraryPhase.Error else LibraryPhase.Charts(charts)
-    }
-
-    when (phase) {
-        is LibraryPhase.Loading -> CenteredBox { CircularProgressIndicator() }
-        is LibraryPhase.Error -> CenteredBox { Text("加载失败，请检查网络") }
-        is LibraryPhase.Charts -> ChartList(
-            charts = (phase as LibraryPhase.Charts).charts,
+    when (val s = state) {
+        is LibraryUiState.Loading -> CenteredBox { CircularProgressIndicator() }
+        is LibraryUiState.Error -> CenteredBox {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("加载失败，请检查网络")
+                Spacer(Modifier.size(12.dp))
+                Button(onClick = vm::load) { Text("重试") }
+            }
+        }
+        is LibraryUiState.Charts -> ChartList(
+            charts = s.charts,
             onChart = { c -> onOpenChart(c.id, c.name) },
         )
     }
@@ -67,7 +64,7 @@ private fun ChartList(charts: List<Chart>, onChart: (Chart) -> Unit) {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        item { Text("排行榜", style = androidx.compose.material3.MaterialTheme.typography.titleLarge) }
+        item { Text("排行榜", style = MaterialTheme.typography.titleLarge) }
         items(charts, key = { it.id }) { c ->
             Row(
                 modifier = Modifier
@@ -94,7 +91,7 @@ private fun ChartList(charts: List<Chart>, onChart: (Chart) -> Unit) {
                 Spacer(Modifier.width(12.dp))
                 Text(
                     text = c.name,
-                    style = androidx.compose.material3.MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyLarge,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )

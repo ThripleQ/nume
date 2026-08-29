@@ -1,11 +1,13 @@
 package com.thripleq.nume.core.repo
 
-import com.thripleq.nume.Gateway
+import com.thripleq.nume.core.net.NetEaseGateway
 import com.thripleq.nume.core.net.NeteaseOp
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import javax.inject.Inject
+import javax.inject.Singleton
 
 data class Track(
     val id: String,
@@ -26,10 +28,13 @@ data class Chart(
  * No-login content source. /weapi/toplist/detail is served anonymously, so the
  * public charts are a safe first source until login + personalised lists land.
  */
-object ChartRepository {
+@Singleton
+class ChartRepository @Inject constructor(
+    private val gateway: NetEaseGateway,
+) {
 
     suspend fun charts(): List<Chart> = withContext(Dispatchers.IO) {
-        val r = Gateway.netease.call(NeteaseOp.TOPLIST_DETAIL)
+        val r = gateway.call(NeteaseOp.TOPLIST_DETAIL)
         if (r.err != 0) {
             val preview = String(r.body, 0, minOf(200, r.body.size), Charsets.UTF_8)
             Log.e("ChartRepository", "toplist failed: err=${r.err} code=${r.code} body=${preview}")
@@ -86,7 +91,7 @@ object ChartRepository {
      * pull the complete set via /weapi/v3/playlist/detail instead.
      */
     suspend fun chartTracks(chartId: String): List<Track> = withContext(Dispatchers.IO) {
-        val r = Gateway.netease.call(NeteaseOp.PLAYLIST_DETAIL, chartId, "0")
+        val r = gateway.call(NeteaseOp.PLAYLIST_DETAIL, chartId, "0")
         if (r.err != 0) {
             Log.e("ChartRepository", "playlist detail failed: err=${r.err} code=${r.code}")
             return@withContext emptyList()

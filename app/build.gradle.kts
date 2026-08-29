@@ -3,6 +3,8 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose)
+    alias(libs.plugins.hilt)
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -102,4 +104,13 @@ dependencies {
 
     // image loading
     implementation(libs.coil.compose)
+
+    // dependency injection (Hilt)
+    implementation(libs.dagger.hilt.android)
+    ksp(libs.dagger.hilt.compiler)
+    implementation(libs.androidx.hilt.navigation.compose)
+    // Hilt 2.59.2 bundles a kotlin-metadata-jvm that tops out at metadata 2.3.0;
+    // Kotlin 2.4.x emits 2.4.0 metadata and would abort the processor. Bump the
+    // metadata reader explicitly until a Hilt release tracks Kotlin 2.4.
+    ksp("org.jetbrains.kotlin:kotlin-metadata-jvm:2.4.10")
 }
