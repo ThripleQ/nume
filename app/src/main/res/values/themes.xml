@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose renders the full UI; the platform theme just needs to provide
+         a no-action-bar surface and let the app go edge-to-edge. -->
+    <style name="Theme.Nume" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Simple eighth-note glyph, centered in the 66dp adaptive-icon safe zone. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M46,66 L46,44 L64,40 L64,58 L54,58 L54,74 A7,7 0 1 1 40,74 A7,7 0 0 1 46,74 A7,7 0 0 1 46,66 Z M46,66 L46,66" />
+</vector>
