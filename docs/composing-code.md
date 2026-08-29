@@ -33,6 +33,7 @@
 - 状态统一叫 `UiState`，用 `sealed interface` 表达 `Loading / Error / Ready(data)`。
 - 事件触发统一走 ViewModel；数据经 Repository 出、进接口。
 - 看到路径就该知道放什么；看到函数名就该知道它干嘛。
+- 导航一律 type-safe（`@Serializable` destination + `navController.navigate(Destination)`），目的地集集中定义在 `NumeApp`。禁止字符串路径 + 手工 `Uri.encode`。
 
 ## 4. 其他硬约定
 

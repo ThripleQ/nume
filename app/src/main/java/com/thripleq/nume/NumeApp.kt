@@ -1,23 +1,30 @@
 package com.thripleq.nume
 
-import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import androidx.navigation.navArgument
+import androidx.navigation.toRoute
 import com.thripleq.nume.ui.screens.ChartDetailScreen
 import com.thripleq.nume.ui.screens.LibraryScreen
 import com.thripleq.nume.ui.screens.PlayerScreen
+import kotlinx.serialization.Serializable
 
-object Routes {
-    const val PLAYER = "player"
-    const val HOME = "home"
-    const val CHART = "chart/{chartId}/{name}"
-    fun chart(id: String, name: String) = "chart/$id/${Uri.encode(name)}"
-}
+/**
+ * Type-safe navigation destinations, mirroring the screen set. Navigation
+ * concerns live only here: screens stay navigation-agnostic and are given
+ * plain callbacks by [NumeApp].
+ */
+@Serializable
+object Home
+
+@Serializable
+object Player
+
+/** [ChartDetailScreen] parameters, carried as structured args. */
+@Serializable
+data class ChartDestination(val chartId: String, val name: String)
 
 /** Root of the Compose UI. Navigation lives here; screens below stay navigation-agnostic. */
 @Composable
@@ -26,28 +33,26 @@ fun NumeApp() {
 
     NavHost(
         navController = navController,
-        startDestination = Routes.HOME,
+        startDestination = Home,
         modifier = Modifier,
     ) {
-        composable(Routes.HOME) {
+        composable<Home> {
             LibraryScreen(
-                onOpenChart = { id, name -> navController.navigate(Routes.chart(id, name)) },
+                onOpenChart = { id, name ->
+                    navController.navigate(ChartDestination(chartId = id, name = name))
+                },
             )
         }
-        composable(
-            route = Routes.CHART,
-            arguments = listOf(
-                navArgument("chartId") { type = NavType.StringType },
-                navArgument("name") { type = NavType.StringType },
-            ),
-        ) { backStackEntry ->
+        composable<ChartDestination> { backStackEntry ->
+            // chartId/name serialized by the type-safe route; read through to the screen.
+            val args = backStackEntry.toRoute<ChartDestination>()
             ChartDetailScreen(
-                chartId = backStackEntry.arguments?.getString("chartId").orEmpty(),
-                name = backStackEntry.arguments?.getString("name").orEmpty(),
+                chartId = args.chartId,
+                name = args.name,
                 onBack = { navController.popBackStack() },
-                onOpenPlayer = { navController.navigate(Routes.PLAYER) },
+                onOpenPlayer = { navController.navigate(Player) },
             )
         }
-        composable(Routes.PLAYER) { PlayerScreen() }
+        composable<Player> { PlayerScreen() }
     }
 }

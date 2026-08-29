@@ -99,6 +99,7 @@ libnetease 以 `NE_USE_CURL=OFF` 编译，**不依赖 curl**。所有请求照�
 - [x] 前台服务 + 系统媒体通知
 - [x] Hilt 依赖注入（AppModule 提供 gateway；Repository/PlaybackLauncher 注入）
 - [x] ViewModel + UiState(StateFlow) 引入；屏幕只订阅 UiState、发事件，不再自取数据
+- [x] type-safe 导航（@Serializable destination，目的地集中定义，替代字符串路径）
 - [ ] 登录二维码（另做）
 - [ ] Home / 搜索 / 播放页打磨
 - [ ] 离线下载（DownloadManager）
