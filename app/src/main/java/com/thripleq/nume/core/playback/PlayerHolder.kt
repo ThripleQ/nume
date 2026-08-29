@@ -54,6 +54,7 @@ object PlayerHolder {
         return ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaFactory)
             .setAudioAttributes(audioAttributes, /* handleAudioFocus= */ true)
+            .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
     }
 

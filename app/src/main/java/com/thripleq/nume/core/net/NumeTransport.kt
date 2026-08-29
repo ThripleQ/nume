@@ -5,6 +5,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import android.util.Log
 import java.util.concurrent.TimeUnit
 
 /**
@@ -63,13 +64,16 @@ object NumeTransport {
             builder.header("Referer", "https://music.163.com")
 
             return try {
+                Log.d("NumeTransport", "-> ${method} ${url}")
                 client.newCall(builder.build()).execute().use { resp ->
                     val status = resp.code
                     val bytes = resp.body.bytes()
                     val cookies = resp.headers.values("Set-Cookie").takeIf { it.isNotEmpty() }
+                    Log.d("NumeTransport", "<- status=${status} bytes=${bytes.size}")
                     NumeTransportOut(status, null, bytes, cookies?.toTypedArray())
                 }
             } catch (e: Exception) {
+                Log.e("NumeTransport", "transport failed for ${url}: ${e}", e)
                 NumeTransportOut(0, e.message ?: "transport error", ByteArray(0), null)
             }
         }

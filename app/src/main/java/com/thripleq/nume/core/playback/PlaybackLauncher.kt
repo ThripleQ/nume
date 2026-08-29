@@ -20,29 +20,59 @@ import org.json.JSONObject
  */
 object PlaybackLauncher {
 
-    suspend fun play(context: Context, track: Track) {
-        val url = songUrl(track.id) ?: return
-        val item = MediaItem.Builder()
-            .setMediaId(track.id)
-            .setUri(Uri.parse(url))
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(track.name)
-                    .setArtist(track.artist)
-                    .setArtworkUri(track.artworkUrl?.let { Uri.parse(it) })
-                    .build(),
-            )
-            .build()
+    /** Plays a single track; ⏮/⏭ become no-ops since there is no queue. */
+    suspend fun play(context: Context, track: Track) =
+        play(context, listOf(track), 0)
 
+    /**
+     * Plays every track of [tracks] as a queue starting at [index], so ⏮/⏭ and
+     * autoplay move through the whole list (e.g. an entire chart).
+     */
+    suspend fun play(context: Context, tracks: List<Track>, index: Int) {
+        if (tracks.isEmpty()) return
+        // Resolve audio URLs for the whole queue eagerly. Tracks that fail to
+        // resolve are dropped so they can't abort the remaining queue.
+        val items = tracks.mapNotNull { track ->
+            songUrl(track.id)?.toHttps()?.let { url ->
+                track to MediaItem.Builder()
+                    .setMediaId(track.id)
+                    .setUri(Uri.parse(url))
+                    .setMediaMetadata(
+                        MediaMetadata.Builder()
+                            .setTitle(track.name)
+                            .setArtist(track.artist)
+                            .setArtworkUri(track.artworkUrl?.let { Uri.parse(it) })
+                            .build(),
+                    )
+                    .build()
+            }
+        }
+        if (items.isEmpty()) return
+        val safeIndex = index.coerceIn(0, items.lastIndex)
         val player = PlayerHolder.get(context)
+        player.setMediaItems(items.map { it.second }, safeIndex, 0L)
+        player.prepare()
+        player.play()
+
+        // Start the background service AFTER playback has begun. Media3's
+        // MediaSessionService calls startForeground() off the first player-state
+        // change; kicking the foreground timer first when the audio fetch is slow
+        // blows Android's 5s window and crashes (ForegroundServiceDidNotStart…).
         ContextCompat.startForegroundService(
             context,
             Intent(context, PlaybackService::class.java),
         )
-        player.setMediaItem(item)
-        player.prepare()
-        player.play()
     }
+
+    /** Netease CDN audio URLs come back as http://; ExoPlayer blocks cleartext by
+     *  default, and the CDN serves the same files over https. Upgrade instead of
+     *  weakening the network security policy. */
+    private fun String.toHttps(): String =
+        if (startsWith("http://", ignoreCase = true)) {
+            "https://" + substring(7)
+        } else {
+            this
+        }
 
     private suspend fun songUrl(id: String): String? = withContext(Dispatchers.IO) {
         val gateway = Gateway.netease

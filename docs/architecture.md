@@ -20,7 +20,7 @@ Nume 是桌面端播放器 [Netune](https://github.com/ThripleQ/netune) 的安�
 │ 核心层 · Core                                    │
 │   Repository               数据聚合/编排         │
 │   Media3 ExoPlayer + MediaSessionService 播放  │
-│   CachingDataSource ★      区间缓存心脏         │
+│   SimpleCache + CacheDataSource ★  字节缓存    │
 │   libnetease (JNI 数据网关)  签名/加密/API 解析   │
 │   OkHttp                   真正收发 HTTP         │
 └───────────────────┬───────────────────────────┘
@@ -47,9 +47,8 @@ Nume 是桌面端播放器 [Netune](https://github.com/ThripleQ/netune) 的安�
 
 | 项 | 决策 | 说明 |
 |---|---|---|
-| 缓存模式 | 边播边缓 + 手动离线 | 播放即写缓存；另支持"下载到离线"整批。 |
-| 缓存索引 | 沿用桌面端原子 JSON | `.tmp` 写入后 `rename`，防崩溃损坏；与 Netune 布局一致、可复用排障经验。 |
-| 并发下载 | 完整复刻桌面端 | seek 到未缓存区间时**并行**多个 Range 下载，避免串行等待。 |
+| 缓存模式 | Media3 `SimpleCache` + `CacheDataSource` | 采用官方引擎（原 ExoPlayer 新家）做字节缓存：编码无关、按字节随机访问；不再手写分段/索引，桌面端“分段+原子索引”经验仅作理解参考 |
+| 索引/并发 | `SimpleCache` 内部索引 + LRU evictor | SimpleCache 自管哈希索引（崩溃更不易损坏），LRU 限额 512MiB；Range 分段与 seek 冷区由 CacheDataSource/官方能力承接 |
 | JNI 边界 | 传输注入 | libnetease 照常跑高层调用，仅在发 HTTP 一刻经注册的 transport 回调到 Kotlin(OkHttp)。 |
 | libnetease 接入 | git submodule 钉版 | 单一事实源，`git pull` 升级即可。 |
 | 线程契约 | 串行派发 | request-kernel 全局单线程，`NetEaseGateway` 用单派发 + 锁串行所有调用。 |
@@ -69,21 +68,20 @@ libnetease 以 `NE_USE_CURL=OFF` 编译，**不依赖 curl**。所有请求照�
 > 澄清：这不是"零反向回调"。C 侧保留了**一个窄的 transport 回调**（仅 HTTP 发送原语），
 > 但所有真实网络 I/O 仍在 OkHttp，Set-Cookie 吸收与加解密留在 C，边界干净、便于调试。
 
-## 五、缓存设计（CachingDataSource，下一步实现）
+## 五、缓存设计（Media3 字节缓存，当前已落地）
 
-对照 Netune 桌面端，移植为 Media3 的自定义 `DataSource`，供 ExoPlayer 做随机读：
+缓存不再手写，而是用 Media3 官方引擎（原 ExoPlayer）的 `SimpleCache` + `CacheDataSource`：
 
-- **分段缓存**：音频按固定段切分落盘 `camera/segment` 文件，命中段同步吐出，未命中段触发下载。
-- **Range 下载**：请求带 `Range: bytes=...-`，OkHttp 下载缺失段；支持断点续传（已有分段不重下）。
-- **真实总时长**：由 `Content-Length` + 码率推算真实时长，让进度条从开始就正确，代替桌面端
-  "先探流再修正"。
-- **原子索引**：每次写完分段后，`.tmp` → `rename` 原子更新 JSON 索引，崩溃自愈。
-- **离线**：手动"下载到离线"整首/整列表写满分段；离线模式优先读缓存。
+- **编码无关**：按字节缓存，mp3/aac/flac/wav 一律走同一管道，ExoPlayer 原生解码。
+- **Range/seek**：命中段本地直读，未命中段由 `CacheDataSource` 走上游 Range 请求；seek 冷区由官方能力接管。
+- **LRU evictor**：`LeastRecentlyUsedCacheEvictor`，配额 512MiB。
+- **队列播放**：点一首歌以整榜为队列，`Player.setMediaItems(...)` 让 ⏮/⏭/自动连播生效。
+- **离线**(后续)：Media3 提供 `DownloadManager`，接入后支持“下载到离线”整批。
 
 ## 六、持久化
 
-- Room：元数据（歌单、歌单曲目、歌词缓存、下载记录）。
-- 分段缓存索引 + 音频文件：独立于 Room 的磁盘布局（与桌面端一致）。
+- Room(后续)：元数据（歌单、歌单曲目、歌词缓存、下载记录）。
+- Media3 `SimpleCache` 自带哈希索引 + `StandaloneDatabaseProvider` 落库，独立于应用 UI 数据。
 
 ## 七、测试 / 构建
 
@@ -95,7 +93,10 @@ libnetease 以 `NE_USE_CURL=OFF` 编译，**不依赖 curl**。所有请求照�
 - [x] 项目骨架、主题、导航
 - [x] libnetease 子模块接入 + 原生桥（NDK/CMake、transport 注入）
 - [x] OkHttp transport 走通 libnetease 请求内核
-- [ ] CachingDataSource（分段缓存 / Range / 原子索引 / seek 并行下载）
-- [ ] Media3 接线（自定义 DataSource 挂进 ExoPlayer，验证边播边缓与冷区 seek）
+- [x] Media3 字节缓存（SimpleCache + CacheDataSource）接进 ExoPlayer
+- [x] 真机播放链路：榜单 → 曲目 → 签名 URL → 缓存 → 出声
+- [x] 队列播放（整榜 ⏮/⏭/连播）
+- [x] 前台服务 + 系统媒体通知
 - [ ] 登录二维码（另做）
-- [ ] Home / 播放页 UI
+- [ ] Home / 搜索 / 播放页打磨，ViewModel 引入
+- [ ] 离线下载（DownloadManager）

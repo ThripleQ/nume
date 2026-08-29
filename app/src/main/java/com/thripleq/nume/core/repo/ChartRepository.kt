@@ -2,6 +2,7 @@ package com.thripleq.nume.core.repo
 
 import com.thripleq.nume.Gateway
 import com.thripleq.nume.core.net.NeteaseOp
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -29,9 +30,14 @@ object ChartRepository {
 
     suspend fun charts(): List<Chart> = withContext(Dispatchers.IO) {
         val r = Gateway.netease.call(NeteaseOp.TOPLIST_DETAIL)
-        if (r.err != 0) return@withContext emptyList()
+        if (r.err != 0) {
+            val preview = String(r.body, 0, minOf(200, r.body.size), Charsets.UTF_8)
+            Log.e("ChartRepository", "toplist failed: err=${r.err} code=${r.code} body=${preview}")
+            return@withContext emptyList()
+        }
         try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
+            Log.d("ChartRepository", "toplist ok, root keys=${root.length()}, has list=${root.has("list")}")
             val list = root.optJSONArray("list") ?: return@withContext emptyList()
             buildList {
                 for (i in 0 until list.length()) {
@@ -71,6 +77,26 @@ object ChartRepository {
                     ),
                 )
             }
+        }
+    }
+
+    /**
+     * Full track list for a chart. Anonymous /weapi/toplist/detail leaves the
+     * per-chart `tracks` preview empty; the chart's id IS a playlist id, so we
+     * pull the complete set via /weapi/v3/playlist/detail instead.
+     */
+    suspend fun chartTracks(chartId: String): List<Track> = withContext(Dispatchers.IO) {
+        val r = Gateway.netease.call(NeteaseOp.PLAYLIST_DETAIL, chartId, "0")
+        if (r.err != 0) {
+            Log.e("ChartRepository", "playlist detail failed: err=${r.err} code=${r.code}")
+            return@withContext emptyList()
+        }
+        try {
+            val root = JSONObject(String(r.body, Charsets.UTF_8))
+            val playlist = root.optJSONObject("playlist") ?: return@withContext emptyList()
+            parseTracks(playlist.optJSONArray("tracks"))
+        } catch (_: Exception) {
+            emptyList()
         }
     }
 }

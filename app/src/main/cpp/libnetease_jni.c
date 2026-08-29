@@ -74,7 +74,10 @@ static ne_http_resp *jni_transport_request(
     JNIEnv *env = attached();
     if (!env) return transport_error_resp("jni attach failed");
 
-    const char *vals[6] = { url, method, body, content_type,
+    /* Kotlin NumeTransport.httpRequest(method, url, body, contentType,
+       cookieHeader, userAgent); the C transport is (url, method, ...), so
+       reorder the first two here to match the Kotlin order. */
+    const char *vals[6] = { method, url, body, content_type,
                             cookie_header, user_agent };
     jstring js[6];
     int ok = 1;
@@ -91,8 +94,32 @@ static ne_http_resp *jni_transport_request(
                      g_transport_http, js[0], js[1], js[2], js[3], js[4], js[5]);
     for (int i = 0; i < 6; i++) (*env)->DeleteLocalRef(env, js[i]);
     if (!out) {
-        (*env)->ExceptionClear(env);
-        return transport_error_resp("okhttp transport returned null");
+        /* A pending JVM exception explains a null transport result; surface it
+           instead of discarding it (previous builds only said "returned null"). */
+        char msg[256] = "okhttp transport returned null";
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionDescribe(env); /* prints full stack to logcat */
+            jthrowable ex = (*env)->ExceptionOccurred(env);
+            (*env)->ExceptionClear(env);
+            jclass excCls = (*env)->FindClass(env, "java/lang/Throwable");
+            if (excCls && ex) {
+                jmethodID m = (*env)->GetMethodID(env, excCls, "toString",
+                                                  "()Ljava/lang/String;");
+                if (m) {
+                    jstring s = (*env)->CallObjectMethod(env, ex, m);
+                    jboolean isCopy = JNI_FALSE;
+                    const char *u = (*env)->GetStringUTFChars(env, s, &isCopy);
+                    if (u) {
+                        snprintf(msg, sizeof msg, "okhttp transport: %s", u);
+                        (*env)->ReleaseStringUTFChars(env, s, u);
+                    }
+                    (*env)->DeleteLocalRef(env, s);
+                }
+                (*env)->DeleteLocalRef(env, excCls);
+            }
+            (*env)->DeleteLocalRef(env, ex);
+        }
+        return transport_error_resp(msg);
     }
 
     ne_http_resp *r = ne_xmalloc(sizeof(ne_http_resp));
