@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Compose renders the full UI; the platform theme just needs to provide
-         a no-action-bar surface and let the app go edge-to-edge. -->
-    <style name="Theme.Nume" parent="android:Theme.Material.Light.NoActionBar" />
+         a no-action-bar surface and let the app go edge-to-edge. Must NOT be
+         Light-only: a forced-light theme keeps the app light even when the
+         system is in dark mode, so text never switches to the light-on-dark
+         colors. DayNight follows the system. -->
+    <style name="Theme.Nume" parent="android:Theme.Material.NoActionBar" />
 </resources>

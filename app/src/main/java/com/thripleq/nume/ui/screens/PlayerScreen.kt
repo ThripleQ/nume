@@ -134,6 +134,7 @@ fun PlayerScreen() {
         Text(
             text = title.ifEmpty { "未设置歌曲" },
             style = MaterialTheme.typography.headlineSmall,
+            color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.fillMaxWidth(),
@@ -168,8 +169,8 @@ fun PlayerScreen() {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(formatTime(positionMs), style = MaterialTheme.typography.labelSmall)
-                Text(formatTime(durationMs), style = MaterialTheme.typography.labelSmall)
+                Text(formatTime(positionMs), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(formatTime(durationMs), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
 

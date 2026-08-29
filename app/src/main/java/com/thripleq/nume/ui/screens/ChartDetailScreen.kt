@@ -50,7 +50,7 @@ fun ChartDetailScreen(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         item {
@@ -58,11 +58,13 @@ fun ChartDetailScreen(
                 Text(
                     text = "‹",
                     style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.clickable { onBack() }.padding(end = 12.dp),
                 )
                 Text(
                     text = name,
                     style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -75,7 +77,7 @@ fun ChartDetailScreen(
                 ) {
                     CircularProgressIndicator(Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("加载曲目中…", style = MaterialTheme.typography.bodySmall)
+                    Text("加载曲目中…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 ChartDetailUiState.Error -> Text(
                     "曲目加载失败",
@@ -106,6 +108,7 @@ private fun TrackRow(track: Track, onClick: () -> Unit) {
         Text(
             text = track.name,
             style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
@@ -113,6 +116,7 @@ private fun TrackRow(track: Track, onClick: () -> Unit) {
         Text(
             text = track.artist,
             style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(start = 12.dp),

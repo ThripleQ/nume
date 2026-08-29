@@ -45,7 +45,7 @@ fun LibraryScreen(onOpenChart: (String, String) -> Unit) {
         is LibraryUiState.Loading -> CenteredBox { CircularProgressIndicator() }
         is LibraryUiState.Error -> CenteredBox {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("加载失败，请检查网络")
+                Text("加载失败，请检查网络", color = MaterialTheme.colorScheme.onSurface)
                 Spacer(Modifier.size(12.dp))
                 Button(onClick = vm::load) { Text("重试") }
             }
@@ -61,10 +61,10 @@ fun LibraryScreen(onOpenChart: (String, String) -> Unit) {
 private fun ChartList(charts: List<Chart>, onChart: (Chart) -> Unit) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 128.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        item { Text("排行榜", style = MaterialTheme.typography.titleLarge) }
+        item { Text("排行榜", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface) }
         items(charts, key = { it.id }) { c ->
             Row(
                 modifier = Modifier
@@ -92,6 +92,7 @@ private fun ChartList(charts: List<Chart>, onChart: (Chart) -> Unit) {
                 Text(
                     text = c.name,
                     style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
