@@ -1,6 +1,7 @@
 package com.thripleq.nume.core.playback
 
 import android.content.Context
+import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import java.io.File
@@ -19,6 +20,7 @@ object PlaybackCache {
         cache ?: SimpleCache(
             File(context.cacheDir, "media_cache"),
             LeastRecentlyUsedCacheEvictor(MAX_CACHE_BYTES),
+            StandaloneDatabaseProvider(context),
         ).also { cache = it }
     }
 

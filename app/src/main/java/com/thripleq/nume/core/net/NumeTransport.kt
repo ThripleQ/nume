@@ -65,7 +65,7 @@ object NumeTransport {
             return try {
                 client.newCall(builder.build()).execute().use { resp ->
                     val status = resp.code
-                    val bytes = resp.body?.bytes() ?: ByteArray(0)
+                    val bytes = resp.body.bytes()
                     val cookies = resp.headers.values("Set-Cookie").takeIf { it.isNotEmpty() }
                     NumeTransportOut(status, null, bytes, cookies?.toTypedArray())
                 }
