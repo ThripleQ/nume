@@ -97,6 +97,8 @@ libnetease 以 `NE_USE_CURL=OFF` 编译，**不依赖 curl**。所有请求照�
 - [x] 真机播放链路：榜单 → 曲目 → 签名 URL → 缓存 → 出声
 - [x] 队列播放（整榜 ⏮/⏭/连播）
 - [x] 前台服务 + 系统媒体通知
+- [x] Hilt 依赖注入（AppModule 提供 gateway；Repository/PlaybackLauncher 注入）
+- [x] ViewModel + UiState(StateFlow) 引入；屏幕只订阅 UiState、发事件，不再自取数据
 - [ ] 登录二维码（另做）
-- [ ] Home / 搜索 / 播放页打磨，ViewModel 引入
+- [ ] Home / 搜索 / 播放页打磨
 - [ ] 离线下载（DownloadManager）
