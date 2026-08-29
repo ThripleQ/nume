@@ -10,20 +10,26 @@
 - **UI**: Jetpack Compose + Material 3 (dynamic color / Material You)
 - **Playback**: AndroidX Media3 (ExoPlayer + Session)
 - **Networking**: OkHttp — the Kotlin layer that replaces libnetease's built-in curl transport
-- **Native bridge**: libnetease integrated via JNI (in progress — see roadmap)
+- **Native bridge**: libnetease integrated via JNI + transport injection
 
 ## Project layout
 
 ```
 app/
   src/main/java/com/thripleq/nume/
-    MainActivity.kt        # single activity, Compose entry
-    NumeApp.kt             # root UI + navigation graph
-    ui/
-      theme/               # Material 3 color scheme, typography
-      screens/             # feature screens
-  src/main/cpp/            # JNI bridge to libnetease (planned)
+    MainActivity.kt        # single activity, Compose entry (@AndroidEntryPoint)
+    NumeApp.kt             # root UI + type-safe navigation graph
+    di/                    # Hilt wiring (AppModule provides the gateway)
+    ui/                    # Compose screens + per-feature ViewModels/UiState
+    core/                  # net (libnetease gateway), repo, playback (Media3)
+  src/main/cpp/            # JNI bridge to libnetease (CMake + NDK)
 ```
+
+## Documentation
+
+- **[docs/architecture.md](docs/architecture.md)** — 架构地图（分层/数据流/决策/路线图），唯一事实源
+- **[docs/navigation-map.md](docs/navigation-map.md)** — 找东西的心智地图（三桶归位 / 命名 / 怎么搜）
+- **[docs/composing-code.md](docs/composing-code.md)** — 编码纪律（依赖规矩 / 职责守恒 / type-safe 导航）
 
 ## Architecture direction
 
@@ -36,10 +42,9 @@ curl (`NE_USE_CURL=OFF`) and, when it needs to send a request, calls an injected
 jumps over JNI to a Kotlin OkHttp layer. All real I/O lives in Kotlin; the C side keeps a single
 narrow transport callback.
 
-The core player goal — Netune's segment cache, Range-resumable downloads, parallel seek downloads,
-and true-total-duration progress — is reimplemented on Android as a custom Media3
-[`DataSource`](docs/architecture.md#五缓存设计cachingdatasource下一步实现): i.e. it mirrors the
-desktop caching engine, just driven by ExoPlayer's random reads instead of a download scheduler.
+Playback and caching lean on Media3 end-to-end: `ExoPlayer` + `MediaSessionService` for playback,
+`SimpleCache`+`CacheDataSource` for format-agnostic byte caching (we chose to depend on Media3
+rather than hand-roll Netune's segment cache — see the architecture doc for the trade-off).
 
 ## Building
 
@@ -51,7 +56,4 @@ CI (GitHub Actions) builds `assembleDebug` on every push to `main`/`beta` and up
 
 ## Roadmap
 
-- [ ] JNI bridge + libnetease native build (CMake + NDK)
-- [ ] OkHttp transport wiring through the libnetease request kernel
-- [ ] Login (QR) screen
-- [ ] Home / library / player screens with Media3
+Status and next steps live in **[docs/architecture.md](docs/architecture.md) → 路线图**.

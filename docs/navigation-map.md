@@ -1,0 +1,61 @@
+# 找东西的心智地图（navigation map）
+
+目标：改了功能"能一次定位"，不靠背路径、不靠翻整个工程。三个桶 + 一个地图。
+
+---
+
+## 1. 三个桶：功能该放哪
+
+代码只归三类，看"它是什么"定桶，不用记文件名：
+
+| 桶 | 放什么 | 找它时想什么 |
+|---|---|---|
+| `ui/` | 界面：长什么样、点了干什么 | "图/交互" |
+| `core/` | 数据从哪来、怎么播放、怎么联网 | "数据/播放/网络" |
+| `di/` | 谁注入了谁、可替换的实现 | "装配/可换" |
+
+一个类只属于一个桶。横跨三层的东西=还没归好位，是"找不到"的根源。
+
+## 2. 桶内的功能分块（包）
+
+每个功能一块：`ui/<功能>/<屏>Screen.kt + <屏>ViewModel.kt`（含其 `UiState`）。
+现有块：
+
+```
+ui/
+├── theme/         # 主题（颜色/字体/尺寸）
+├── library/       # 免登录排行榜首页
+├── chart/         # 单榜曲目列表 → 队列播放
+└── screens/       # 布局主体（哑组件，跨功能）
+    ├── LibraryScreen.kt
+    ├── ChartDetailScreen.kt
+    └── PlayerScreen.kt
+
+core/
+├── net/           # libnetease JNI 网关（数据出口）
+├── repo/          # Repository：取/转换数据
+└── playback/      # ExoPlayer / 字节缓存 / 播放服务 / 启动器
+```
+
+新增偶发：`ui/<功能>/` 建"Screen + ViewModel + UiState"，再把导航目的地加进 `NumeApp`。三步，无其他。
+
+## 3. 找到一件东西的三步
+
+1. **IDE 全局搜**（`Ctrl+Shift+F`）：按功能/术语名搜——前提是命名统一（见下）。
+2. **按桶猜路径**：它是 UI / 数据 / 播放？进对应桶找文件。
+3. **查 docs + README**：架构地图（architecture.md）选层，纪律（composing-code.md）查规，本文件查归位。
+
+## 4. 命名统一（全局搜的前提）
+
+- 一个东西一个词：歌曲一律 `Track`（禁混 `Song`/`audioItem`）。
+- 每屏状态统一 `XxxUiState`（sealed：`Loading/Error/Ready`）。
+- 事件触发统一走 ViewModel。
+- 目的地类型统一 `@Serializable`，集中在 `NumeApp`。
+
+命名乱 → 全局搜搜不齐 → 找不到。这是"找不到"的第一杀手。
+
+## 5. 找不到=通常是这三件事没做好
+
+- 命名不统一（→ 第 4 节）
+- 职责横跨多类（→ 职责守恒，composing-code.md §2）
+- 改动没更新地图（→ 改完 `docs/` 同步，architecture 是唯一事实源）
