@@ -1,0 +1,3 @@
+[submodule "libnetease"]
+	path = libnetease
+	url = https://github.com/ThripleQ/libnetease.git

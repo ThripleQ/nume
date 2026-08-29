@@ -8,6 +8,7 @@ plugins {
 android {
     compileSdk = libs.versions.compileSdk.get().toInt()
     namespace = "com.thripleq.nume"
+    ndkVersion = "27.2.12479018"
 
     defaultConfig {
         applicationId = "com.thripleq.nume"
@@ -16,6 +17,17 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         vectorDrawables.useSupportLibrary = true
+
+        // libnetease is compiled without curl; the app installs an OkHttp
+        // transport over JNI at runtime (see jni_glue.c / NumeTransport).
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
+        externalNativeBuild {
+            cmake {
+                arguments += listOf("-DNE_USE_CURL=OFF")
+            }
+        }
     }
 
     buildTypes {
@@ -41,6 +53,15 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    externalNativeBuild {
+        cmake {
+            // Builds libnetease (submodule) without curl + our JNI glue as one
+            // shared lib. See src/main/cpp/CMakeLists.txt.
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     packaging.resources {

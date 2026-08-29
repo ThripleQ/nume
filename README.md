@@ -27,11 +27,19 @@ app/
 
 ## Architecture direction
 
+Full design: **[docs/architecture.md](docs/architecture.md)**.
+
 libnetease acts as the data gateway exactly as it does in Netune: it produces the request
-parameters (weapi/eapi encryption, QR login, device-id pool, …) while the actual HTTP I/O runs
-in Kotlin via OkHttp. Kotlin owns UI, playback (Media3), and networking; the C core is reached
-through a thin JNI layer. Because the C→Kotlin approach avoids reverse JNI calls, the bridge stays
-one-directional and simple.
+parameters (weapi/eapi encryption, device-id pool, …) and parses responses, while the actual HTTP
+I/O runs in Kotlin via OkHttp. The bridge uses **transport injection**: libnetease is built without
+curl (`NE_USE_CURL=OFF`) and, when it needs to send a request, calls an injected transport that
+jumps over JNI to a Kotlin OkHttp layer. All real I/O lives in Kotlin; the C side keeps a single
+narrow transport callback.
+
+The core player goal — Netune's segment cache, Range-resumable downloads, parallel seek downloads,
+and true-total-duration progress — is reimplemented on Android as a custom Media3
+[`DataSource`](docs/architecture.md#五缓存设计cachingdatasource下一步实现): i.e. it mirrors the
+desktop caching engine, just driven by ExoPlayer's random reads instead of a download scheduler.
 
 ## Building
 
