@@ -24,17 +24,21 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.thripleq.nume.core.playback.PlaybackLauncher
 import com.thripleq.nume.core.repo.Chart
 import com.thripleq.nume.core.repo.ChartRepository
 import com.thripleq.nume.core.repo.Track
+import kotlinx.coroutines.launch
 
 private sealed interface LibraryPhase {
     data object Loading : LibraryPhase
@@ -44,7 +48,9 @@ private sealed interface LibraryPhase {
 
 /** 免登录首页：先列排行榜，点进榜单后列出曲目，点按播放。 */
 @Composable
-fun LibraryScreen(onPlayTrack: suspend (Track) -> Unit) {
+fun LibraryScreen(onOpenPlayer: () -> Unit) {
+    val context = LocalContext.current.applicationContext
+    val scope = rememberCoroutineScope()
     var phase by remember { mutableStateOf<LibraryPhase>(LibraryPhase.Loading) }
     var selected by remember { mutableStateOf<Chart?>(null) }
     var backStackCount by remember { mutableStateOf(0) }
@@ -73,7 +79,12 @@ fun LibraryScreen(onPlayTrack: suspend (Track) -> Unit) {
                         selected = null
                         backStackCount += 1
                     },
-                    onPlay = onPlayTrack,
+                    onPlay = { track ->
+                        scope.launch {
+                            PlaybackLauncher.play(context, track)
+                            onOpenPlayer()
+                        }
+                    },
                 )
             }
         }
@@ -127,7 +138,7 @@ private fun ChartList(charts: List<Chart>, onChart: (Chart) -> Unit) {
 private fun TrackList(
     chart: Chart,
     onBack: () -> Unit,
-    onPlay: suspend (Track) -> Unit,
+    onPlay: (Track) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
