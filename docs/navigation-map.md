@@ -24,12 +24,15 @@
 ```
 ui/
 ├── theme/         # 主题（颜色/字体/尺寸）
-├── library/       # 免登录排行榜首页
-├── chart/         # 单榜曲目列表 → 队列播放
+├── library/       # 排行榜列表（LibraryScreen + LibraryViewModel）
+├── chart/         # 单榜曲目列表（ChartDetailScreen + ChartDetailViewModel）
 └── screens/       # 布局主体（哑组件，跨功能）
+    ├── HomeScreen.kt        # 探索 tab 的占位首页（纯展示）
     ├── LibraryScreen.kt
     ├── ChartDetailScreen.kt
-    └── PlayerScreen.kt
+    ├── PlayerScreen.kt
+    ├── SearchScreen.kt      # 搜索 tab 占位（纯展示，待实现）
+    └── ProfileScreen.kt     # 我的 tab 占位（纯展示，待实现）
 
 core/
 ├── net/           # libnetease JNI 网关（数据出口）
