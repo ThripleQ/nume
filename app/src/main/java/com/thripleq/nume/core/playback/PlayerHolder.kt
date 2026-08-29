@@ -21,13 +21,6 @@ object PlayerHolder {
         player ?: build(context).also { player = it }
     }
 
-    fun release() {
-        synchronized(this) {
-            player?.release()
-            player = null
-        }
-    }
-
     private fun build(context: Context): ExoPlayer {
         // Upstream HTTP (the audio CDN). Accept protocol redirects and keep a
         // UA so netease's CDN doesn't 4xx on us.

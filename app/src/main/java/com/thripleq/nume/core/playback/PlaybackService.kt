@@ -51,8 +51,12 @@ class PlaybackService : MediaSessionService() {
         mediaSession = MediaSession.Builder(this, PlayerHolder.get(this))
             .setSessionActivity(activityIntent)
             .build()
-        // Session built → Media3 will startForeground() itself on first state
-        // change; the placeholder is no longer needed and would otherwise linger.
+
+        // STOP_FOREGROUND_DETACH drops the foreground binding but does NOT remove
+        // the placeholder notification — it would linger as a stale "准备播放…"
+        // item. Cancel it explicitly now that Media3 owns the notification and will
+        // repost under its own id on the first player-state change.
+        getSystemService(NotificationManager::class.java)?.cancel(PLACEHOLDER_NOTIF_ID)
         stopForeground(Service.STOP_FOREGROUND_DETACH)
     }
 
