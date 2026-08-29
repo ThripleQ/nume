@@ -41,9 +41,9 @@ static jmethodID    g_apiresult_ctor;
 static JNIEnv *attached(void) {
     if (!g_vm) return NULL;
     JNIEnv *env = NULL;
-    if (g_vm->GetEnv((void **)&env, JNI_VERSION_1_6) == JNI_OK) return env;
+    if ((*g_vm)->GetEnv(g_vm, (void **)&env, JNI_VERSION_1_6) == JNI_OK) return env;
     JavaVMAttachArgs a = { JNI_VERSION_1_6, NULL, NULL };
-    if (g_vm->AttachCurrentThread(&env, &a) == JNI_OK) return env;
+    if ((*g_vm)->AttachCurrentThread(g_vm, &env, &a) == JNI_OK) return env;
     return NULL;
 }
 
@@ -240,7 +240,7 @@ static JNINativeMethod g_methods[] = {
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     g_vm = vm;
     JNIEnv *e = NULL;
-    if (vm->GetEnv((void **)&e, JNI_VERSION_1_6) != JNI_OK) return JNI_ERR;
+    if ((*vm)->GetEnv(vm, (void **)&e, JNI_VERSION_1_6) != JNI_OK) return JNI_ERR;
 
     jclass nc = (*e)->FindClass(e, NE_NS "NumeNative");
     if (nc) {
@@ -248,19 +248,19 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
         (*e)->DeleteLocalRef(e, nc);
     }
 
-    g_transport_cls = (*e)->NewGlobalRef(
+    g_transport_cls = (*e)->NewGlobalRef(e,
         (*e)->FindClass(e, NE_NS "NumeTransport"));
     g_transport_http = (*e)->GetStaticMethodID(e, g_transport_cls, "httpRequest",
         "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;"
         "Ljava/lang/String;Ljava/lang/String;)L" NE_NS "NumeTransportOut;");
-    g_out_cls = (*e)->NewGlobalRef(
+    g_out_cls = (*e)->NewGlobalRef(e,
         (*e)->FindClass(e, NE_NS "NumeTransportOut"));
     g_out_status = (*e)->GetFieldID(e, g_out_cls, "status", "I");
     g_out_err = (*e)->GetFieldID(e, g_out_cls, "err", "Ljava/lang/String;");
     g_out_body = (*e)->GetFieldID(e, g_out_cls, "body", "[B");
     g_out_setcookies = (*e)->GetFieldID(e, g_out_cls, "setCookies",
                                         "[Ljava/lang/String;");
-    g_apiresult_cls = (*e)->NewGlobalRef(
+    g_apiresult_cls = (*e)->NewGlobalRef(e,
         (*e)->FindClass(e, NE_NS "ApiResult"));
     g_apiresult_ctor = (*e)->GetMethodID(e, g_apiresult_cls, "<init>", "(DI[B)V");
 
@@ -270,7 +270,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
 
 JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     JNIEnv *e = NULL;
-    if (vm->GetEnv((void **)&e, JNI_VERSION_1_6) != JNI_OK) return;
+    if ((*vm)->GetEnv(vm, (void **)&e, JNI_VERSION_1_6) != JNI_OK) return;
     (*e)->DeleteGlobalRef(e, g_transport_cls);
     (*e)->DeleteGlobalRef(e, g_out_cls);
     (*e)->DeleteGlobalRef(e, g_apiresult_cls);
