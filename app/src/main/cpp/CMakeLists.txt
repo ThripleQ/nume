@@ -8,9 +8,10 @@ project(nume_jni C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-# libnetease submodule lives at the repo root; externalNativeBuild runs cmake
-# from app/src/main/cpp, so we step up to the repository root.
-get_filename_component(NUME_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+# libnetease submodule lives at the repo root. externalNativeBuild runs cmake
+# from app/.cxx, so CMAKE_CURRENT_LIST_DIR == <root>/app/src/main/cpp; step
+# up four levels to the repository root.
+get_filename_component(NUME_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../.." ABSOLUTE)
 set(NUME_NETEASE_SRC "${NUME_ROOT}/libnetease")
 
 # Snapshot before add_subdirectory so libnetease's `option()` reads them.
