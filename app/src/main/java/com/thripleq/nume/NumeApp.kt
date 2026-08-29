@@ -5,9 +5,10 @@ import androidx.compose.ui.Modifier
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.thripleq.nume.ui.screens.HomeScreen
+import com.thripleq.nume.ui.screens.PlayerScreen
 
 object Routes {
+    const val PLAYER = "player"
     const val HOME = "home"
 }
 
@@ -17,9 +18,9 @@ fun NumeApp() {
     val navController = rememberNavController()
     NavHost(
         navController = navController,
-        startDestination = Routes.HOME,
+        startDestination = Routes.PLAYER,
         modifier = Modifier,
     ) {
-        composable(Routes.HOME) { HomeScreen() }
+        composable(Routes.PLAYER) { PlayerScreen() }
     }
 }
