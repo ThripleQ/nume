@@ -1,8 +1,13 @@
 package com.thripleq.nume.ui.screens
 
 import android.net.Uri
+import android.content.Context
 import android.widget.Toast
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -23,10 +28,10 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DiscFull
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -41,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
@@ -53,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import coil.imageLoader
 import coil.request.ImageRequest
 import com.thripleq.nume.core.repo.Track
 import com.thripleq.nume.core.repo.TrackCollection
@@ -61,6 +68,12 @@ import com.thripleq.nume.ui.profile.TrackListSource
 import com.thripleq.nume.ui.profile.TrackListUiState
 import com.thripleq.nume.ui.profile.TrackListViewModel
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 /**
  * 统一"壳子 + 列表"详情页：榜单 / 歌单 / 专辑 / 喜欢 / 已购都是同一个结构——
@@ -79,6 +92,15 @@ fun TrackListScreen(
     val vm: TrackListViewModel = hiltViewModel()
     val state by vm.uiState.collectAsStateWithLifecycle()
     val src = remember(source) { TrackListSource.from(source) }
+    val context = LocalContext.current
+
+    // 数据到了直接显示列表，封面预载放后台（不阻塞、不反复拉回加载动画）。
+    val collection = (state as? TrackListUiState.Ready)?.collection
+    LaunchedEffect(collection) {
+        if (collection != null) {
+            launch { preloadCovers(context, collection.tracks) }
+        }
+    }
 
     // 头部三按钮的滚动位置：滚到接近视口顶（即将看不见）时上报，触发底部操作浮岛。
     val listState = rememberLazyListState()
@@ -90,80 +112,126 @@ fun TrackListScreen(
     LaunchedEffect(source, id) { vm.load(src, id, title) }
     LaunchedEffect(Unit) { vm.openPlayer.collect { onOpenPlayer() } }
 
-    // 底部浮岛（播放条/操作浮岛）抬高列表：与岛高度动画同速，浮岛变高列表同步留白，
-    // 滚到底部时最后一项不会被遮挡。
-    val animatedBottomInset by animateDpAsState(
-        targetValue = bottomInset,
-        animationSpec = tween(320),
-        label = "bottomInset",
-    )
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 8.dp, top = 8.dp),
+        ) {
+            Text(
+                text = "‹",
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.clickable { onBack() }.padding(end = 12.dp),
+            )
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
 
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-            start = 16.dp,
-            top = 16.dp,
-            end = 16.dp,
-            bottom = 16.dp + animatedBottomInset,
-        ),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "‹",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.clickable { onBack() }.padding(end = 12.dp),
-                )
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            when (val s = state) {
-                TrackListUiState.Loading -> Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(vertical = 12.dp),
-                ) {
-                    CircularProgressIndicator(Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "加载曲目中…",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        if (collection != null) {
+            // 底部浮岛（播放条/操作浮岛）抬高列表：与岛高度动画同速，浮岛变高列表同步留白，
+            // 滚到底部时最后一项不会被遮挡。
+            val animatedBottomInset by animateDpAsState(
+                targetValue = bottomInset,
+                animationSpec = tween(320),
+                label = "bottomInset",
+            )
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    top = 16.dp,
+                    end = 16.dp,
+                    bottom = 16.dp + animatedBottomInset,
+                ),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                item {
+                    TrackListHeader(
+                        collection,
+                        vm,
+                        onActionsTop = { actionsTop = it },
                     )
                 }
-                TrackListUiState.Empty -> Text(
-                    "暂无曲目",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 12.dp),
-                )
-                TrackListUiState.Error -> Text(
-                    "曲目加载失败",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(vertical = 12.dp),
-                )
-                is TrackListUiState.Ready -> TrackListHeader(
-                    s.collection,
-                    vm,
-                    onActionsTop = { actionsTop = it },
-                )
+                itemsIndexed(collection.tracks, key = { _, t -> t.id }) { index, track ->
+                    TrackRow(index, track) { vm.onTrackClick(collection, index) }
+                }
+            }
+        } else {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                when (state) {
+                    TrackListUiState.Loading -> LoadingHint("加载中…")
+                    TrackListUiState.Empty -> Text(
+                        "暂无曲目",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TrackListUiState.Error -> Text(
+                        "曲目加载失败",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    is TrackListUiState.Ready -> LoadingHint("加载中…")
+                }
             }
         }
-        val collection = (state as? TrackListUiState.Ready)?.collection
-        if (collection != null) {
-            itemsIndexed(collection.tracks, key = { _, t -> t.id }) { index, track ->
-                TrackRow(index, track) { vm.onTrackClick(collection, index) }
+    }
+}
+
+/** 全屏加载动画（数据/首屏封面预载统一用这一段，不再分两段）。 */
+@Composable
+private fun LoadingHint(text: String) {
+    val rotation by rememberInfiniteTransition(label = "loadingSpin").animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(1400, easing = LinearEasing)),
+        label = "rotation",
+    )
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Filled.DiscFull,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .size(56.dp)
+                .graphicsLayer { rotationZ = rotation },
+        )
+        Text(
+            text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** 封面预载并发上限：全量预载但限流，避免一次性轰炸网络。 */
+private const val PRELOAD_CONCURRENCY = 8
+
+/** 预载整单封面到 Coil 缓存（96px 小图，内存命中后滚动零 IO）。
+ *  并发拉取但限流；等全部结束（含失败）再进列表。 */
+private suspend fun preloadCovers(context: Context, tracks: List<Track>) {
+    val loader = context.imageLoader
+    val semaphore = Semaphore(PRELOAD_CONCURRENCY)
+    coroutineScope {
+        tracks.mapNotNull { t ->
+            t.artworkUrl?.let { url ->
+                ImageRequest.Builder(context).data(Uri.parse(url)).size(96).build()
             }
-        }
+        }.map { req ->
+            launch(Dispatchers.IO) {
+                semaphore.withPermit {
+                    runCatching { loader.execute(req) }
+                }
+            }
+        }.joinAll()
     }
 }
 
