@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -31,11 +32,13 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.thripleq.nume.core.playback.PlayerHolder
+import com.thripleq.nume.core.repo.TrackCollection
 import com.thripleq.nume.ui.playerbar.BottomTab
 import com.thripleq.nume.ui.playerbar.PlayerCapsule
 import com.thripleq.nume.ui.playerbar.rememberPlayerState
 import com.thripleq.nume.ui.profile.ProfileViewModel
-import com.thripleq.nume.ui.screens.ChartDetailScreen
+import com.thripleq.nume.ui.profile.TrackListUiState
+import com.thripleq.nume.ui.profile.TrackListViewModel
 import com.thripleq.nume.ui.screens.HomeScreen
 import com.thripleq.nume.ui.screens.LibraryScreen
 import com.thripleq.nume.ui.screens.PlayerScreen
@@ -61,7 +64,7 @@ object Profile
 @Serializable
 object Player
 
-/** [ChartDetailScreen] parameters, carried as structured args. */
+/** [TrackListScreen] for a chart: chart id IS a playlist id. */
 @Serializable
 data class ChartDestination(val chartId: String, val name: String)
 
@@ -104,6 +107,18 @@ fun NumeApp() {
     }
     val selectedTab = currentTab ?: lastTab
 
+    // 列表详情页（榜单/歌单/专辑/喜欢/已购）的滚动浮岛：
+    // TrackListScreen 上报三按钮是否滑出视口 + 当前壳数据，供底部岛切换为操作行。
+    var listActionsOffscreen by remember { mutableStateOf(false) }
+    var listCollection by remember { mutableStateOf<TrackCollection?>(null) }
+    var listPlayAll by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val isListDetail = destination?.hasRoute<TrackListDestination>() == true ||
+        destination?.hasRoute<ChartDestination>() == true
+    // 底部岛的目标高度：列表同步抬高，避免最后一项被播放条/操作浮岛遮挡。
+    val islandBottomInset =
+        (if (playerState.hasTrack) 60.dp else 0.dp) +
+            (if (isListDetail && listActionsOffscreen) 57.dp else 0.dp)
+
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         NavHost(
             navController = navController,
@@ -120,11 +135,21 @@ fun NumeApp() {
             }
             composable<ChartDestination> { entry ->
                 val args = entry.toRoute<ChartDestination>()
-                ChartDetailScreen(
-                    chartId = args.chartId,
-                    name = args.name,
+                val listVm: TrackListViewModel = hiltViewModel()
+                val listState by listVm.uiState.collectAsStateWithLifecycle()
+                val listCol = (listState as? TrackListUiState.Ready)?.collection
+                LaunchedEffect(listCol) { listCollection = listCol }
+                LaunchedEffect(listCol) {
+                    listPlayAll = { listCol?.let(listVm::onPlayAll) }
+                }
+                TrackListScreen(
+                    source = "chart",
+                    id = args.chartId,
+                    title = args.name,
                     onBack = { navController.popBackStack() },
                     onOpenPlayer = { navController.navigate(Player) },
+                    onActionsOffscreen = { listActionsOffscreen = it },
+                    bottomInset = islandBottomInset,
                 )
             }
             composable<Search> { SearchScreen() }
@@ -151,21 +176,32 @@ fun NumeApp() {
             }
             composable<TrackListDestination> { entry ->
                 val args = entry.toRoute<TrackListDestination>()
+                val listVm: TrackListViewModel = hiltViewModel()
+                val listState by listVm.uiState.collectAsStateWithLifecycle()
+                val listCol = (listState as? TrackListUiState.Ready)?.collection
+                LaunchedEffect(listCol) { listCollection = listCol }
+                LaunchedEffect(listCol) {
+                    listPlayAll = { listCol?.let(listVm::onPlayAll) }
+                }
                 TrackListScreen(
                     source = args.source,
                     id = args.id,
                     title = args.title,
                     onBack = { navController.popBackStack() },
                     onOpenPlayer = { navController.navigate(Player) },
+                    onActionsOffscreen = { listActionsOffscreen = it },
+                    bottomInset = islandBottomInset,
                 )
             }
             composable<Player> { PlayerScreen() }
         }
 
         // 合成岛屿：导航 tab 平时可见；详情页收起导航、播放条下滑占位；
+        // 列表详情页滚过头部三按钮时，播放条上移、操作浮岛从下滑入；
         // 播放页整个淡出。无曲目时只有导航行，不进详情页时整岛隐藏。
         AnimatedVisibility(
-            visible = !isPlayerPage && (isTabPage || playerState.hasTrack),
+            visible = !isPlayerPage &&
+                (isTabPage || playerState.hasTrack || (isListDetail && listActionsOffscreen)),
             enter = fadeIn(tween(240)) + slideInVertically(tween(240), initialOffsetY = { it }),
             exit = fadeOut(tween(260)) + slideOutVertically(tween(260), targetOffsetY = { it / 4 }),
             modifier = Modifier
@@ -188,6 +224,11 @@ fun NumeApp() {
                     }
                 },
                 onOpenPlayer = { navController.navigate(Player) },
+                actionVisible = isListDetail && listActionsOffscreen,
+                onPlayAll = { listPlayAll?.invoke() },
+                onPlaceholderAction = {
+                    android.widget.Toast.makeText(context, "开发中", android.widget.Toast.LENGTH_SHORT).show()
+                },
             )
         }
     }

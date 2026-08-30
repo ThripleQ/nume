@@ -86,22 +86,22 @@ class ChartRepository @Inject constructor(
     }
 
     /**
-     * Full track list for a chart. Anonymous /weapi/toplist/detail leaves the
-     * per-chart `tracks` preview empty; the chart's id IS a playlist id, so we
-     * pull the complete set via /weapi/v3/playlist/detail instead.
+     * 一个榜单的完整壳（元数据 + 曲目）。匿名 /weapi/toplist/detail 里
+     * per-chart 的 `tracks` 预览是空的；榜单 id 本身就是歌单 id，改从
+     * /weapi/v3/playlist/detail 拉完整集合。
      */
-    suspend fun chartTracks(chartId: String): List<Track> = withContext(Dispatchers.IO) {
+    suspend fun chartCollection(chartId: String): TrackCollection? = withContext(Dispatchers.IO) {
         val r = gateway.call(NeteaseOp.PLAYLIST_DETAIL, chartId, "0")
         if (r.err != 0) {
             Log.e("ChartRepository", "playlist detail failed: err=${r.err} code=${r.code}")
-            return@withContext emptyList()
+            return@withContext null
         }
         try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
-            val playlist = root.optJSONObject("playlist") ?: return@withContext emptyList()
-            parseTracks(playlist.optJSONArray("tracks"))
+            val playlist = root.optJSONObject("playlist") ?: return@withContext null
+            parsePlaylistObject(playlist, ::parseTracks)
         } catch (_: Exception) {
-            emptyList()
+            null
         }
     }
 }

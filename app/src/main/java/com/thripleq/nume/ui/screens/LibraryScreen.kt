@@ -35,7 +35,7 @@ import com.thripleq.nume.core.repo.Chart
 import com.thripleq.nume.ui.library.LibraryUiState
 import com.thripleq.nume.ui.library.LibraryViewModel
 
-/** 免登录首页：列出排行榜，点进榜单到 [ChartDetailScreen]。 */
+/** 免登录首页：列出排行榜，点进榜单到统一列表页。 */
 @Composable
 fun LibraryScreen(onOpenChart: (String, String) -> Unit) {
     val vm: LibraryViewModel = hiltViewModel()

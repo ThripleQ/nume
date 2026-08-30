@@ -25,22 +25,24 @@
 ui/
 ├── theme/         # 主题（颜色/字体/尺寸）
 ├── library/       # 排行榜列表（LibraryScreen + LibraryViewModel）
-├── chart/         # 单榜曲目列表（ChartDetailScreen + ChartDetailViewModel）
-├── profile/       # 我的（ProfileViewModel：登录态+区块数据；TrackListViewModel：曲目列表）
-├── playerbar/     # 播放条（PlayerCapsule：底部迷你播放器；rememberPlayerState 是播放状态的唯一真相源，播放页也复用它）
+├── chart/         # 单榜曲目列表（已并入统一列表页，chart 包已删除）
+├── profile/       # 我的（ProfileViewModel：登录态+区块数据；TrackListViewModel：统一"壳+列表"页状态）
+├── playerbar/     # 悬浮岛（PlayerCapsule：导航 tab + 迷你播放条 + 列表操作浮岛 ActionNavRow；
+│                  #   rememberPlayerState 是播放状态的唯一真相源，播放页也复用它；
+│                  #   CollectionActions 为列表头部三按钮）
 └── screens/       # 布局主体（哑组件，跨功能）
     ├── HomeScreen.kt        # 探索 tab 的占位首页（纯展示）
     ├── LibraryScreen.kt
-    ├── ChartDetailScreen.kt
     ├── PlayerScreen.kt
     ├── SearchScreen.kt      # 搜索 tab 占位（纯展示，待实现）
     ├── ProfileScreen.kt     # 我的：登录入口 + 喜欢/已购/歌单区块 + 登录对话框
-    ├── TrackListScreen.kt   # 通用曲目列表（喜欢/已购/歌单/专辑，可整单播放）
+    ├── TrackListScreen.kt   # 统一详情页：榜单/歌单/专辑/喜欢/已购 = 壳（封面/标题/数据/操作按钮）+ 曲目列表
     └── WebLoginScreen.kt    # Web 登录（登录的单一入口）
 
 core/
 ├── net/           # libnetease JNI 网关（数据出口）
-├── repo/          # Repository：取/转换数据（ChartRepository / ProfileRepository）
+├── repo/          # Repository：取/转换数据（ChartRepository / ProfileRepository /
+│                  #   TrackCollection 壳元数据模型）
 └── playback/      # 播放四件套：PlayerHolder（进程级播放器+状态+错误恢复）/
                    #   PlaybackLauncher（播放入口+补队列）/ PlaybackService（后台+通知）/
                    #   PlaybackCache（边播边缓存）

@@ -29,6 +29,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Person
@@ -168,23 +170,33 @@ fun PlayerCapsule(
     player: Player,
     onSelectTab: (BottomTab) -> Unit,
     onOpenPlayer: () -> Unit,
+    actionVisible: Boolean = false,
+    onPlayAll: () -> Unit = {},
+    onPlaceholderAction: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(28.dp)
     val barHeight = 60.dp
     val navSectionHeight = 57.dp
+    val actionSectionHeight = 57.dp
     val navOffsetPx = with(LocalDensity.current) { navSectionHeight.toPx() }
+    val actionOffsetPx = with(LocalDensity.current) { actionSectionHeight.toPx() }
 
     val showBar = playerState.hasTrack
-    val targetHeight = (if (showBar) barHeight else 0.dp) + (if (navVisible) navSectionHeight else 0.dp)
+    // 操作行只出现在详情页（navVisible=false 时）：播放条先上移让位，操作行从下滑入。
+    val showAction = actionVisible && !navVisible
+    val targetHeight = (if (showBar) barHeight else 0.dp) +
+        (if (navVisible) navSectionHeight else 0.dp) +
+        (if (showAction) actionSectionHeight else 0.dp)
     val height by animateDpAsState(
         targetValue = targetHeight,
         animationSpec = tween(320, easing = FastOutSlowInEasing),
         label = "islandHeight",
     )
-    // 播放条底部对齐 + 负向上移：展开时顶到导航上方，收起时弹性下滑回底部。
+    // 播放条底对齐 + 负向上移：先顶到导航上方（tab 页），再被操作行挤上去（详情页滚动）。
     val barOffsetPx by animateFloatAsState(
-        targetValue = if (navVisible) -navOffsetPx else 0f,
+        targetValue = (if (navVisible) -navOffsetPx else 0f) +
+            (if (showAction) -actionOffsetPx else 0f),
         animationSpec = spring(dampingRatio = 0.85f, stiffness = 520f),
         label = "barOffset",
     )
@@ -232,6 +244,33 @@ fun PlayerCapsule(
                 NavRow(
                     selected = selected,
                     onSelect = onSelectTab,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                )
+            }
+        }
+
+        // 列表详情页的操作浮岛：滚过头部三按钮时，播放条先上移、操作行从下方滑入。
+        AnimatedVisibility(
+            visible = showAction,
+            enter = fadeIn(tween(200)) + slideInVertically(tween(240), initialOffsetY = { it }),
+            exit = fadeOut(tween(180)) + slideOutVertically(tween(240), targetOffsetY = { it }),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(actionSectionHeight),
+        ) {
+            Column(Modifier.fillMaxSize()) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant),
+                )
+                ActionNavRow(
+                    onPlayAll = onPlayAll,
+                    onPlaceholderAction = onPlaceholderAction,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
@@ -368,8 +407,7 @@ private fun NavRow(
     selected: BottomTab,
     onSelect: (BottomTab) -> Unit,
     modifier: Modifier = Modifier,
-) {
-    val pill = RoundedCornerShape(percent = 50)
+) {    val pill = RoundedCornerShape(percent = 50)
     Row(
         modifier = modifier.padding(6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -396,6 +434,70 @@ private fun NavRow(
                     modifier = Modifier.size(24.dp),
                 )
             }
+        }
+    }
+}
+
+/** 列表操作行：与 [NavRow] 同构——均分岛宽、胶囊圆角弧与岛平行、图标居中。
+ *  播放 = primary 胶囊（对应导航"选中"pill）；收藏 / 评论 = 透明（对应"未选中"）。 */
+@Composable
+private fun ActionNavRow(
+    onPlayAll: () -> Unit,
+    onPlaceholderAction: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val pill = RoundedCornerShape(percent = 50)
+    Row(
+        modifier = modifier.padding(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .clip(pill)
+                .background(Color.Transparent)
+                .clickable { onPlaceholderAction() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Filled.Add,
+                contentDescription = "收藏",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(24.dp),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .clip(pill)
+                .background(MaterialTheme.colorScheme.primary)
+                .clickable { onPlayAll() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Filled.PlayArrow,
+                contentDescription = "播放",
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(24.dp),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .clip(pill)
+                .background(Color.Transparent)
+                .clickable { onPlaceholderAction() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Filled.Chat,
+                contentDescription = "评论",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(24.dp),
+            )
         }
     }
 }

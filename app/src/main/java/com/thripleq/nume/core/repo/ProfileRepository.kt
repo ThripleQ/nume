@@ -180,30 +180,31 @@ class ProfileRepository @Inject constructor(
             }
         }
 
-    /** Tracks of a playlist (playlist id IS usable as chart id). */
-    suspend fun playlistTracks(playlistId: String): List<Track> = withContext(Dispatchers.IO) {
+    /** A playlist's full shell (metadata + tracks). Playlist id is a chart id. */
+    suspend fun playlistCollection(playlistId: String): TrackCollection? = withContext(Dispatchers.IO) {
         val r = gateway.call(NeteaseOp.PLAYLIST_DETAIL, playlistId, "0")
-        if (r.err != 0 || r.code != 200.0) return@withContext emptyList()
+        if (r.err != 0 || r.code != 200.0) return@withContext null
         try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
-            val playlist = root.optJSONObject("playlist") ?: return@withContext emptyList()
-            parseTracks(playlist.optJSONArray("tracks"))
+            val playlist = root.optJSONObject("playlist") ?: return@withContext null
+            parsePlaylistObject(playlist, ::parseTracks)
         } catch (_: Exception) {
-            emptyList()
+            null
         }
     }
 
-    /** Tracks of a purchased album (/weapi/v1/album/{id}). */
-    suspend fun albumTracks(albumId: String): List<Track> = withContext(Dispatchers.IO) {
+    /** A purchased album's shell (/weapi/v1/album/{id}). No play-count etc. */
+    suspend fun albumCollection(albumId: String): TrackCollection? = withContext(Dispatchers.IO) {
         val r = gateway.call(NeteaseOp.ALBUM_DETAIL, albumId)
-        Log.e("ProfileDiag", "albumTracks op=${NeteaseOp.ALBUM_DETAIL} id=$albumId code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(300)}")
+        Log.e("ProfileDiag", "albumCollection op=${NeteaseOp.ALBUM_DETAIL} id=$albumId code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(300)}")
         // 与 songDetails 同: 该接口 ApiResult.code 可能为 0.0, 不能以 code!=200 拒绝
-        if (r.err != 0 || r.body.isEmpty()) return@withContext emptyList()
+        if (r.err != 0 || r.body.isEmpty()) return@withContext null
         try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
-            parseTracks(root.optJSONArray("songs"))
+            // 顶层无 album 对象, songs 直接在根; 元数据从首曲推断
+            parseAlbumObject(root, ::parseTracks)
         } catch (_: Exception) {
-            emptyList()
+            null
         }
     }
 
