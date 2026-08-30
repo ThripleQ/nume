@@ -27,6 +27,7 @@ ui/
 ├── library/       # 排行榜列表（LibraryScreen + LibraryViewModel）
 ├── chart/         # 单榜曲目列表（ChartDetailScreen + ChartDetailViewModel）
 ├── profile/       # 我的（ProfileViewModel：登录态+区块数据；TrackListViewModel：曲目列表）
+├── playerbar/     # 播放条（PlayerCapsule：底部迷你播放器；rememberPlayerState 是播放状态的唯一真相源，播放页也复用它）
 └── screens/       # 布局主体（哑组件，跨功能）
     ├── HomeScreen.kt        # 探索 tab 的占位首页（纯展示）
     ├── LibraryScreen.kt
@@ -34,12 +35,15 @@ ui/
     ├── PlayerScreen.kt
     ├── SearchScreen.kt      # 搜索 tab 占位（纯展示，待实现）
     ├── ProfileScreen.kt     # 我的：登录入口 + 喜欢/已购/歌单区块 + 登录对话框
-    └── TrackListScreen.kt   # 通用曲目列表（喜欢/已购/歌单/专辑，可整单播放）
+    ├── TrackListScreen.kt   # 通用曲目列表（喜欢/已购/歌单/专辑，可整单播放）
+    └── WebLoginScreen.kt    # Web 登录（登录的单一入口）
 
 core/
 ├── net/           # libnetease JNI 网关（数据出口）
 ├── repo/          # Repository：取/转换数据（ChartRepository / ProfileRepository）
-└── playback/      # ExoPlayer / 字节缓存 / 播放服务 / 启动器
+└── playback/      # 播放四件套：PlayerHolder（进程级播放器+状态+错误恢复）/
+                   #   PlaybackLauncher（播放入口+补队列）/ PlaybackService（后台+通知）/
+                   #   PlaybackCache（边播边缓存）
 ```
 
 新增偶发：`ui/<功能>/` 建"Screen + ViewModel + UiState"，再把导航目的地加进 `NumeApp`。三步，无其他。
@@ -54,6 +58,8 @@ core/
 
 - 一个东西一个词：歌曲一律 `Track`（禁混 `Song`/`audioItem`）。
 - 每屏状态统一 `XxxUiState`（sealed：`Loading/Error/Ready`）。
+- 播放状态统一走 `rememberPlayerState`（`ui/playerbar/PlayerCapsule.kt`），播放页与迷你条共用，不再各写各的 listener + 轮询。
+- 播放控制（播放/暂停/切歌/seek）统一走 `PlayerHolder.togglePlay/skipNext/skipPrevious/seekTo`，含错误状态恢复。
 - 事件触发统一走 ViewModel。
 - 目的地类型统一 `@Serializable`，集中在 `NumeApp`。
 

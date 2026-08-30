@@ -9,9 +9,15 @@ import androidx.media3.common.MediaMetadata
 import com.thripleq.nume.core.net.NetEaseGateway
 import com.thripleq.nume.core.net.NeteaseOp
 import com.thripleq.nume.core.repo.Track
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -24,6 +30,12 @@ import javax.inject.Singleton
 class PlaybackLauncher @Inject constructor(
     private val gateway: NetEaseGateway,
 ) {
+    // id -> 已解析 url（失败也缓存 null，避免同一首歌反复请求）。
+    private val urlCache = ConcurrentHashMap<String, String?>()
+
+    // 后台补队列只在主线程触碰 ExoPlayer（非线程安全），网络解析在 IO。
+    private val enqueueScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var enqueueJob: Job? = null
 
     /** Plays a single track; ⏮/⏭ become no-ops since there is no queue. */
     suspend fun play(context: Context, track: Track) =
@@ -32,30 +44,31 @@ class PlaybackLauncher @Inject constructor(
     /**
      * Plays every track of [tracks] as a queue starting at [index], so ⏮/⏭ and
      * autoplay move through the whole list (e.g. an entire chart).
+     *
+     * UI 优先: 先把 [index] 首的元数据以占位 [MediaItem] 立即交给 player
+     * （迷你条/播放页零等待显示歌名封面），再解析实际音频 url；解析成功后
+     * 替换占位并开始出声。剩余曲目由 [enqueueRest] 在后台逐首解析追加，
+     * 避免大列表（如"喜欢的音乐"几百首）一次全量解析把点击响应拖到几十秒。
      */
     suspend fun play(context: Context, tracks: List<Track>, index: Int) {
         if (tracks.isEmpty()) return
-        // Resolve audio URLs for the whole queue eagerly. Tracks that fail to
-        // resolve are dropped so they can't abort the remaining queue.
-        val items = tracks.mapNotNull { track ->
-            songUrl(track.id)?.toHttps()?.let { url ->
-                track to MediaItem.Builder()
-                    .setMediaId(track.id)
-                    .setUri(Uri.parse(url))
-                    .setMediaMetadata(
-                        MediaMetadata.Builder()
-                            .setTitle(track.name)
-                            .setArtist(track.artist)
-                            .setArtworkUri(track.artworkUrl?.let { Uri.parse(it) })
-                            .build(),
-                    )
-                    .build()
-            }
-        }
-        if (items.isEmpty()) return
-        val safeIndex = index.coerceIn(0, items.lastIndex)
+        enqueueJob?.cancel()
         val player = PlayerHolder.get(context)
-        player.setMediaItems(items.map { it.second }, safeIndex, 0L)
+
+        val idx = index.coerceIn(0, tracks.lastIndex)
+
+        // 1) 占位即响: 立即让 player 持有当前曲目元数据，UI 即刻显示。
+        val first = tracks[idx]
+        player.setMediaItems(listOf(placeholderItem(first)), 0, 0L)
+
+        // 2) 解析当前首的音频 url; 失败自动向后找最近可播的（VIP/无版权跳过）。
+        val startPlayable = firstPlayable(tracks, idx) ?: run {
+            player.clearMediaItems()
+            return
+        }
+        val (playIdx, url) = startPlayable
+        val playItem = tracks[playIdx]
+        player.setMediaItems(listOf(buildMediaItem(playItem, url)), 0, 0L)
         player.prepare()
         player.play()
 
@@ -67,7 +80,76 @@ class PlaybackLauncher @Inject constructor(
             context,
             Intent(context, PlaybackService::class.java),
         )
+
+        // 3) 后台补齐剩余队列（含 index 前的追尾），不阻塞点击响应。
+        enqueueRest(context, tracks, playIdx)
     }
+
+    /** Appends the rest of [tracks] (after [start]) onto the queue in the background. */
+    private fun enqueueRest(context: Context, tracks: List<Track>, start: Int) {
+        enqueueJob?.cancel()
+        enqueueJob = enqueueScope.launch {
+            val player = PlayerHolder.get(context)
+            val n = tracks.size
+            val order = buildList {
+                for (i in start + 1 until n) add(i)
+                for (i in 0 until start) add(i)
+            }
+            for (i in order) {
+                if (!isActive) break
+                val url = songUrlCached(tracks[i].id)
+                if (url != null) {
+                    player.addMediaItem(buildMediaItem(tracks[i], url))
+                }
+            }
+        }
+    }
+
+    /** First track from [fromIndex] (looping through the head) that resolves a url. */
+    private suspend fun firstPlayable(tracks: List<Track>, fromIndex: Int): Pair<Int, String>? {
+        val n = tracks.size
+        val order = buildList {
+            for (i in fromIndex until n) add(i)
+            for (i in 0 until fromIndex) add(i)
+        }
+        for (i in order) {
+            val url = songUrlCached(tracks[i].id)
+            if (url != null) return i to url
+        }
+        return null
+    }
+
+    private suspend fun songUrlCached(id: String): String? {
+        if (urlCache.containsKey(id)) return urlCache[id]
+        val url = songUrl(id)
+        urlCache[id] = url
+        return url
+    }
+
+    /** [MediaItem] used to make the UI respond before the real url resolves.
+     *  Carries a fake uri that only needs to pass DefaultMediaSourceFactory's
+     *  type inference (".mp3" → progressive). It is never prepared: the real
+     *  item replaces it before [ExoPlayer.prepare] is called. */
+    private fun placeholderItem(track: Track): MediaItem =
+        MediaItem.Builder()
+            .setMediaId(track.id)
+            .setUri(PLACEHOLDER_URI)
+            .setMediaMetadata(mediaMetadata(track))
+            .build()
+
+    private fun buildMediaItem(track: Track, url: String): MediaItem =
+        MediaItem.Builder()
+            .setMediaId(track.id)
+            .setUri(Uri.parse(url.toHttps()))
+            .setMediaMetadata(mediaMetadata(track))
+            .build()
+
+    private fun mediaMetadata(track: Track): MediaMetadata =
+        MediaMetadata.Builder()
+            .setTitle(track.name)
+            .setArtist(track.artist)
+            .setArtworkUri(track.artworkUrl?.let { Uri.parse(it) })
+            .build()
 
     /** Netease CDN audio URLs come back as http://; ExoPlayer blocks cleartext by
      *  default, and the CDN serves the same files over https. Upgrade instead of
@@ -99,5 +181,9 @@ class PlaybackLauncher @Inject constructor(
         } catch (_: Exception) {
             null
         }
+    }
+
+    companion object {
+        private val PLACEHOLDER_URI = Uri.parse("file:///tmp/nume_placeholder.mp3")
     }
 }

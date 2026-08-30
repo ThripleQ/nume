@@ -12,12 +12,18 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -25,22 +31,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.media3.common.MediaMetadata
-import androidx.media3.common.PlaybackException
-import androidx.media3.common.Player
 import coil.compose.AsyncImage
 import com.thripleq.nume.core.playback.PlayerHolder
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
+import com.thripleq.nume.ui.playerbar.rememberPlayerState
 
 /** Full-screen player: cover, metadata, seek bar and transport controls. */
 @Composable
@@ -48,58 +48,14 @@ fun PlayerScreen() {
     val context = LocalContext.current.applicationContext
     val player = remember { PlayerHolder.get(context) }
 
-    var title by remember { mutableStateOf("") }
-    var artist by remember { mutableStateOf("") }
-    var coverUrl by remember { mutableStateOf<String?>(null) }
-    var durationMs by remember { mutableLongStateOf(0L) }
-    var positionMs by remember { mutableLongStateOf(0L) }
-    var isPlaying by remember { mutableStateOf(false) }
-    var isBuffering by remember { mutableStateOf(false) }
-    var errorText by remember { mutableStateOf<String?>(null) }
     var seekPending by remember { mutableStateOf(false) }
     var dragMs by remember { mutableLongStateOf(0L) }
+    // Shared player observation (same source the mini player bar uses): seeded
+    // with live state, so the play/pause button reflects reality the moment this
+    // screen opens instead of defaulting to "not playing".
+    val state = rememberPlayerState(player) { seekPending }
 
-    LaunchedEffect(player) {
-        val listener = object : Player.Listener {
-            override fun onMediaMetadataChanged(meta: MediaMetadata) {
-                title = meta.title?.toString() ?: ""
-                artist = meta.artist?.toString() ?: ""
-                coverUrl = meta.artworkUri?.toString()
-            }
-
-            override fun onIsPlayingChanged(playing: Boolean) {
-                isPlaying = playing
-            }
-
-            override fun onPlaybackStateChanged(state: Int) {
-                isBuffering = state == Player.STATE_BUFFERING
-                if (state == Player.STATE_READY) {
-                    durationMs = player.duration.coerceAtLeast(0L)
-                }
-            }
-
-            override fun onPlayerError(error: PlaybackException) {
-                errorText = error.message
-            }
-        }
-        player.addListener(listener)
-        // Seed state if the player already holds a media item when we open the screen.
-        val meta = player.mediaMetadata
-        title = meta.title?.toString() ?: ""
-        artist = meta.artist?.toString() ?: ""
-        coverUrl = meta.artworkUri?.toString()
-        try {
-            while (isActive) {
-                if (!seekPending) positionMs = player.currentPosition
-                durationMs = player.duration.coerceAtLeast(0L)
-                delay(250)
-            }
-        } finally {
-            player.removeListener(listener)
-        }
-    }
-
-    val rangeMax = durationMs.toFloat().coerceAtLeast(1f)
+    val rangeMax = state.durationMs.toFloat().coerceAtLeast(1f)
 
     Column(
         modifier = Modifier
@@ -118,10 +74,10 @@ fun PlayerScreen() {
                 .clip(RoundedCornerShape(16.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
         ) {
-            coverUrl?.let { uri ->
+            state.coverUrl?.let { uri ->
                 AsyncImage(
                     model = Uri.parse(uri),
-                    contentDescription = title,
+                    contentDescription = state.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -132,7 +88,7 @@ fun PlayerScreen() {
 
         // Track / metadata
         Text(
-            text = title.ifEmpty { "未设置歌曲" },
+            text = state.title.ifEmpty { "未设置歌曲" },
             style = MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
@@ -142,7 +98,7 @@ fun PlayerScreen() {
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            text = artist,
+            text = state.artist,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -156,21 +112,21 @@ fun PlayerScreen() {
         // Seek bar + time labels
         Column(Modifier.fillMaxWidth()) {
             Slider(
-                value = if (seekPending) dragMs.toFloat() else positionMs.toFloat(),
+                value = if (seekPending) dragMs.toFloat() else state.positionMs.toFloat(),
                 onValueChange = { dragMs = it.toLong(); seekPending = true },
                 onValueChangeFinished = {
-                    player.seekTo(dragMs)
+                    PlayerHolder.seekTo(player, dragMs)
                     seekPending = false
                 },
                 valueRange = 0f..rangeMax,
-                enabled = durationMs > 0,
+                enabled = state.durationMs > 0,
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(formatTime(positionMs), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(formatTime(durationMs), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(formatTime(state.positionMs), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(formatTime(state.durationMs), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
 
@@ -182,26 +138,38 @@ fun PlayerScreen() {
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = { player.seekToPreviousMediaItem() }) {
-                TransportGlyph("⏮", 32.sp)
+            IconButton(onClick = { PlayerHolder.skipPrevious(player) }) {
+                Icon(
+                    Icons.Filled.SkipPrevious,
+                    contentDescription = "上一首",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(32.dp),
+                )
             }
-            IconButton(onClick = {
-                if (isPlaying) player.pause() else player.play()
-            }) {
-                val glyph = when {
-                    isBuffering -> "⋯"
-                    isPlaying -> "⏸"
-                    else -> "▶"
-                }
-                TransportGlyph(glyph, 48.sp)
+            IconButton(onClick = { PlayerHolder.togglePlay(player) }) {
+                Icon(
+                    imageVector = when {
+                        state.isBuffering -> Icons.Filled.MoreHoriz
+                        state.isPlaying -> Icons.Filled.Pause
+                        else -> Icons.Filled.PlayArrow
+                    },
+                    contentDescription = if (state.isPlaying) "暂停" else "播放",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(48.dp),
+                )
             }
-            IconButton(onClick = { player.seekToNextMediaItem() }) {
-                TransportGlyph("⏭", 32.sp)
+            IconButton(onClick = { PlayerHolder.skipNext(player) }) {
+                Icon(
+                    Icons.Filled.SkipNext,
+                    contentDescription = "下一首",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(32.dp),
+                )
             }
         }
 
         Spacer(Modifier.height(8.dp))
-        errorText?.let {
+        state.errorText?.let {
             Text(
                 text = it,
                 style = MaterialTheme.typography.bodySmall,
@@ -217,14 +185,6 @@ fun PlayerScreen() {
 }
 
 @Composable
-private fun TransportGlyph(glyph: String, size: androidx.compose.ui.unit.TextUnit) {
-    Text(
-        text = glyph,
-        fontSize = size,
-        color = MaterialTheme.colorScheme.onSurface,
-    )
-}
-
 private fun formatTime(ms: Long): String {
     val total = ms.coerceAtLeast(0L) / 1000
     val m = total / 60

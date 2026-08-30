@@ -160,6 +160,10 @@ class ProfileRepository @Inject constructor(
                     val o = arr.optJSONObject(i) ?: continue
                     val id = o.optLong("id", 0L)
                     if (id <= 0) continue
+                    // 剔除"我喜欢的音乐"（specialType==5）：它在"我的"页有独立
+                    // 区块（likedTracks），不列入"创建的歌单"。
+                    if (o.optLong("specialType", 0L) == 5L) continue
+                    if (o.optString("name") == "我喜欢的音乐") continue
                     val p = PlaylistSummary(
                         id = id.toString(),
                         name = o.optString("name"),

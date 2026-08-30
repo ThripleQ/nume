@@ -1,34 +1,28 @@
 package com.thripleq.nume
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -36,6 +30,11 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
+import com.thripleq.nume.core.playback.PlayerHolder
+import com.thripleq.nume.ui.playerbar.BottomTab
+import com.thripleq.nume.ui.playerbar.PlayerCapsule
+import com.thripleq.nume.ui.playerbar.rememberPlayerState
+import com.thripleq.nume.ui.profile.ProfileViewModel
 import com.thripleq.nume.ui.screens.ChartDetailScreen
 import com.thripleq.nume.ui.screens.HomeScreen
 import com.thripleq.nume.ui.screens.LibraryScreen
@@ -77,31 +76,33 @@ data class TrackListDestination(val source: String, val id: String, val title: S
 @Serializable
 object WebLogin
 
-/** The top-level tabs shown in the floating capsule. */
-private enum class BottomTab(
-    val route: Any,
-    val label: String,
-    val icon: ImageVector,
-) {
-    ExploreTab(route = Home, label = "探索", icon = Icons.Filled.Home),
-    SearchTab(route = Search, label = "搜索", icon = Icons.Filled.Search),
-    ProfileTab(route = Profile, label = "我的", icon = Icons.Filled.Person),
-}
-
-/** Root of the Compose UI: navigation graph + floating capsule. */
+/** Root of the Compose UI: navigation graph + floating island. */
 @Composable
 fun NumeApp() {
     val navController = rememberNavController()
+    val context = LocalContext.current.applicationContext
+    val player = remember { PlayerHolder.get(context) }
+    val playerState = rememberPlayerState(player)
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val destination = backStackEntry?.destination
 
-    val selectedTab = when {
+    val isTabPage = destination?.hasRoute<Home>() == true ||
+        destination?.hasRoute<Search>() == true ||
+        destination?.hasRoute<Profile>() == true
+    val isPlayerPage = destination?.hasRoute<Player>() == true
+    val currentTab = when {
         destination?.hasRoute<Home>() == true -> BottomTab.ExploreTab
         destination?.hasRoute<Search>() == true -> BottomTab.SearchTab
         destination?.hasRoute<Profile>() == true -> BottomTab.ProfileTab
-        else -> null // detail screens (chart / player) hide the capsule
+        else -> null
     }
+    // 详情页时保持进入前的 tab，收起/展开动画中高亮 pill 不闪到探索。
+    var lastTab by remember { mutableStateOf(BottomTab.ExploreTab) }
+    LaunchedEffect(currentTab) {
+        if (currentTab != null) lastTab = currentTab
+    }
+    val selectedTab = currentTab ?: lastTab
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         NavHost(
@@ -136,9 +137,16 @@ fun NumeApp() {
                 )
             }
             composable<WebLogin> {
+                // 复用 Profile tab 的 ViewModel（同一 backstack entry 作用域）：
+                // WebLogin 页持有的是临时 entry 自己的实例，登录成功 loadProfile
+                // 只会更新临时实例，返回即销毁，Profile 页不会自动刷新。
+                val profileVm: ProfileViewModel = hiltViewModel(
+                    viewModelStoreOwner = navController.getBackStackEntry<Profile>(),
+                )
                 WebLoginScreen(
                     onDone = { navController.popBackStack() },
                     onBack = { navController.popBackStack() },
+                    vm = profileVm,
                 )
             }
             composable<TrackListDestination> { entry ->
@@ -154,10 +162,23 @@ fun NumeApp() {
             composable<Player> { PlayerScreen() }
         }
 
-        if (selectedTab != null) {
-            CapsuleBar(
+        // 合成岛屿：导航 tab 平时可见；详情页收起导航、播放条下滑占位；
+        // 播放页整个淡出。无曲目时只有导航行，不进详情页时整岛隐藏。
+        AnimatedVisibility(
+            visible = !isPlayerPage && (isTabPage || playerState.hasTrack),
+            enter = fadeIn(tween(240)) + slideInVertically(tween(240), initialOffsetY = { it }),
+            exit = fadeOut(tween(260)) + slideOutVertically(tween(260), targetOffsetY = { it / 4 }),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(vertical = 14.dp),
+        ) {
+            PlayerCapsule(
+                navVisible = isTabPage,
                 selected = selectedTab,
-                onSelect = { tab ->
+                playerState = playerState,
+                player = player,
+                onSelectTab = { tab ->
                     navController.navigate(tab.route) {
                         popUpTo(navController.graph.findStartDestination().id) {
                             saveState = true
@@ -166,64 +187,8 @@ fun NumeApp() {
                         restoreState = true
                     }
                 },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .padding(vertical = 14.dp),
+                onOpenPlayer = { navController.navigate(Player) },
             )
-        }
-    }
-}
-
-/**
- * Floating capsule: keeps the rounded-pill island shape from the glass version,
- * but rendered with plain Material colors (no backdrop blur). Width is 7/8 of
- * the screen; tabs are evenly split, with the selected one on a theme-color pill.
- */
-@Composable
-private fun CapsuleBar(
-    selected: BottomTab,
-    onSelect: (BottomTab) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val pill = RoundedCornerShape(percent = 50)
-    val capsuleHeight = 56.dp
-    val screenWidth = LocalConfiguration.current.screenWidthDp.dp
-    val islandWidth = screenWidth * 7f / 8f
-
-    Row(
-        modifier = modifier
-            .width(islandWidth)
-            .height(capsuleHeight)
-            .shadow(elevation = 12.dp, shape = pill, clip = false)
-            .clip(pill)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .border(width = 1.dp, color = MaterialTheme.colorScheme.outlineVariant, shape = pill)
-            .padding(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        BottomTab.entries.forEach { tab ->
-            val isSelected = tab == selected
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .clip(pill)
-                    .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                    .clickable { onSelect(tab) },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = tab.icon,
-                    contentDescription = tab.label,
-                    tint = if (isSelected) {
-                        MaterialTheme.colorScheme.onPrimary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    modifier = Modifier.size(24.dp),
-                )
-            }
         }
     }
 }
