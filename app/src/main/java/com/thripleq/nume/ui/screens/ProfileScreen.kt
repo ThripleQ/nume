@@ -28,10 +28,12 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -144,6 +146,10 @@ private fun LoggedInContent(
     data: ProfileData,
     onOpenTracks: (source: String, id: String, title: String) -> Unit,
 ) {
+    // 强制 LocalContentColor = onSurface, 兜底所有未显式指定 color 的 Text
+    // (Material You 在某些设备/壁纸下派生的 onBackground 偏深, 不指定 color
+    // 的 Text 会显示成接近背景的颜色, 在深色主题下看不清)
+    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -197,6 +203,7 @@ private fun LoggedInContent(
                 onOpenTracks("playlist", id, name)
             }
         }
+    }
     }
 }
 

@@ -84,6 +84,7 @@ class PlaybackLauncher @Inject constructor(
         // the account / track is not entitled to it (e.g. anon access).
         for (quality in listOf("exhigh", "standard")) {
             val r = gateway.call(NeteaseOp.SONG_URL_V1, id, quality)
+            android.util.Log.e("ProfileDiag", "songUrl id=$id q=$quality code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(300)}")
             val url = parseUrl(r)
             if (url != null) return@withContext url
         }

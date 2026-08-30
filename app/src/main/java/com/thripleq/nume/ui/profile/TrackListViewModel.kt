@@ -32,6 +32,7 @@ enum class TrackListSource(val wire: String) {
 
 sealed interface TrackListUiState {
     data object Loading : TrackListUiState
+    data object Empty : TrackListUiState
     data object Error : TrackListUiState
     data class Ready(val tracks: List<Track>) : TrackListUiState
 }
@@ -63,10 +64,9 @@ class TrackListViewModel @Inject constructor(
                 TrackListSource.PLAYLIST -> repository.playlistTracks(id)
                 TrackListSource.ALBUM -> repository.albumTracks(id)
             }
-            _uiState.value = if (tracks.isEmpty()) {
-                TrackListUiState.Error
-            } else {
-                TrackListUiState.Ready(tracks)
+            _uiState.value = when {
+                tracks.isEmpty() -> TrackListUiState.Empty
+                else -> TrackListUiState.Ready(tracks)
             }
         }
     }

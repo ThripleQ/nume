@@ -1,6 +1,7 @@
 package com.thripleq.nume.ui.screens
 
 import android.annotation.SuppressLint
+import android.net.Uri
 import android.util.Log
 import android.view.ViewGroup
 import android.webkit.CookieManager
@@ -91,19 +92,16 @@ fun WebLoginScreen(
 
                                 override fun onPageFinished(view: WebView, url: String?) {
                                     super.onPageFinished(view, url)
-                                    // 登录成功会跳转到移动端主页 y.music.163.com/m
-                                    if (url?.startsWith("https://y.music.163.com/m") == true &&
-                                        !finished.value
-                                    ) {
+                                    if (finished.value) return
+                                    // 登录成功判定不依赖具体跳转 URL：直接检查 cookie 里是否
+                                    // 已出现登录态 MUSIC_U（网易可能跳到 y.music.163.com 或
+                                    // music.163.com 任一子域，URL 检测不可靠）。
+                                    val host = url?.let { Uri.parse(it).host } ?: ""
+                                    val cookie = CookieManager.getInstance()
+                                        .getCookie("https://$host") ?: ""
+                                    Log.d("WebLogin", "pageFinished url=$url host=$host cookieLen=${cookie.length} hasMUSIC_U=${cookie.contains("MUSIC_U=")}")
+                                    if (cookie.contains("MUSIC_U=")) {
                                         finished.value = true
-                                        val cookie =
-                                            CookieManager.getInstance().getCookie(url)
-                                        Log.d("WebLogin", "url=$url cookieLen=${cookie?.length ?: 0}")
-                                        if (cookie.isNullOrBlank()) {
-                                            error = "未获取到登录态，请重试"
-                                            finished.value = false
-                                            return
-                                        }
                                         vm.webLoginCookies(cookie) { ok, msg ->
                                             if (ok) {
                                                 onDone()

@@ -87,6 +87,12 @@ fun TrackListScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                TrackListUiState.Empty -> Text(
+                    "暂无曲目",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 12.dp),
+                )
                 TrackListUiState.Error -> Text(
                     "曲目加载失败",
                     style = MaterialTheme.typography.bodySmall,
