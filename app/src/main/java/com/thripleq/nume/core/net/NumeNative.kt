@@ -19,6 +19,12 @@ object NumeNative {
     /** Overrides the API base URL (defaults to https://music.163.com). */
     external fun setApiBase(base: String)
 
+    /**
+     * Merges a browser-exported cookie string ("MUSIC_U=…; __csrf=…; …") into the
+     * jar and persists it, so a later process start reloads the login state.
+     */
+    external fun importCookies(cookieStr: String)
+
     /** Dispatches [op] (one of [NeteaseOp]) with [args]; returns the raw result. */
     external fun request(op: Int, args: Array<out String>): ApiResult
 }

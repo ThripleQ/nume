@@ -25,6 +25,17 @@
 | 数据从哪取、怎么转换（网络规则） | `core/repo/ChartRepository.kt` |
 | 网络请求 / 签名 / 解析（基本不用动） | `core/net/` |
 
+## 2.5 我的 / 登录 / 账号数据
+
+| 我想… | 去改 |
+|---|---|
+| “我的”页区块（喜欢 / 已购 / 歌单）怎么摆、点哪跳哪 | `ui/screens/ProfileScreen.kt` |
+| “我的”页状态：登录态 + 各区块数据加载 | `ui/profile/ProfileViewModel.kt` |
+| 登录对话框（Cookie 粘贴 / 短信验证码） | `ui/screens/ProfileScreen.kt` 内 `LoginDialog` |
+| 账号 / 喜欢 / 已购 / 歌单的数据获取与解析 | `core/repo/ProfileRepository.kt` |
+| 曲目列表页（喜欢 / 已购 / 歌单 / 专辑） | `ui/screens/TrackListScreen.kt` + `ui/profile/TrackListViewModel.kt` |
+| 登录 / 验证码接口（JNI op 30/31、cookie 导入） | `app/src/main/cpp/libnetease_jni.c` + `core/net/NeteaseOp.kt` |
+
 ## 3. 播放：点歌、进度、后台、缓存
 
 | 我想… | 去改 |

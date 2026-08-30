@@ -22,6 +22,15 @@ class NetEaseGateway(
         NumeNative.setCookieFile(cookieFile.absolutePath)
     }
 
+    /**
+     * Merges a browser-exported cookie string into the jar and persists it.
+     * Serialized under the same lock as [call] so the jar is never touched
+     * concurrently.
+     */
+    fun importCookies(cookieStr: String) {
+        synchronized(lock) { NumeNative.importCookies(cookieStr) }
+    }
+
     /** Runs one libnetease service call, blocking on [io] while it round-trips. */
     suspend fun call(op: Int, vararg args: String): ApiResult =
         withContext(io) {

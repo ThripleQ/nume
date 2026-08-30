@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "netease/cookiejar.h"
 #include "netease/http.h"
 #include "netease/request.h"
 #include "netease/services.h"
@@ -207,6 +208,8 @@ static ne_resp *dispatch(int op, int narg, const char *const a[]) {
         case 27: return ne_login_email(A(0), A(1));
         case 28: return ne_login_cellphone(A(0), A(1));
         case 29: return ne_login_refresh();
+        case 30: return ne_send_captcha(A(0), A(1));
+        case 31: return ne_login_cellphone_captcha(A(0), A(1), A(2));
         default: return NULL;
     }
 #undef A
@@ -223,6 +226,19 @@ static void native_set_cookie_file(JNIEnv *env, jobject thiz, jstring path) {
 static void native_set_api_base(JNIEnv *env, jobject thiz, jstring base) {
     char *p = copy_jstring(env, base);
     if (p) { ne_set_api_base(p); free(p); }
+}
+
+/* Merge a browser-exported cookie string ("MUSIC_U=xxx; __csrf=yyy; ...")
+ * into the global jar and persist it to the cookie file, so the next process
+ * start reloads the login state. Runs under NetEaseGateway's single lock. */
+static void native_import_cookies(JNIEnv *env, jobject thiz, jstring cookieStr) {
+    char *s = copy_jstring(env, cookieStr);
+    if (!s) return;
+    ne_jar *jar = ne_global_jar();
+    ne_jar_merge_cookie_str(jar, s);
+    const char *path = ne_cookie_file();
+    if (path && *path) ne_jar_save_file(jar, path);
+    free(s);
 }
 
 static jobject native_request(JNIEnv *env, jobject thiz, jint op,
@@ -260,6 +276,7 @@ static jobject native_request(JNIEnv *env, jobject thiz, jint op,
 static JNINativeMethod g_methods[] = {
     { "setCookieFile", "(Ljava/lang/String;)V", (void *)native_set_cookie_file },
     { "setApiBase",    "(Ljava/lang/String;)V", (void *)native_set_api_base },
+    { "importCookies", "(Ljava/lang/String;)V", (void *)native_import_cookies },
     { "request",
       "(I[Ljava/lang/String;)L" NE_NS "ApiResult;", (void *)native_request },
 };
@@ -271,7 +288,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
 
     jclass nc = (*e)->FindClass(e, NE_NS "NumeNative");
     if (nc) {
-        (*e)->RegisterNatives(e, nc, g_methods, 3);
+        (*e)->RegisterNatives(e, nc, g_methods, 4);
         (*e)->DeleteLocalRef(e, nc);
     }
 

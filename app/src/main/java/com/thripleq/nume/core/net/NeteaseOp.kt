@@ -31,4 +31,6 @@ object NeteaseOp {
     const val LOGIN_EMAIL = 27
     const val LOGIN_CELLPHONE = 28
     const val LOGIN_REFRESH = 29
+    const val SEND_CAPTCHA = 30
+    const val LOGIN_CELLPHONE_CAPTCHA = 31
 }

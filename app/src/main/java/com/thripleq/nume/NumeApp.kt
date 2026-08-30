@@ -42,6 +42,7 @@ import com.thripleq.nume.ui.screens.LibraryScreen
 import com.thripleq.nume.ui.screens.PlayerScreen
 import com.thripleq.nume.ui.screens.ProfileScreen
 import com.thripleq.nume.ui.screens.SearchScreen
+import com.thripleq.nume.ui.screens.TrackListScreen
 import kotlinx.serialization.Serializable
 
 /** Type-safe navigation destinations. Navigation lives only in [NumeApp]. */
@@ -63,6 +64,13 @@ object Player
 /** [ChartDetailScreen] parameters, carried as structured args. */
 @Serializable
 data class ChartDestination(val chartId: String, val name: String)
+
+/**
+ * Generic track list opened from the Profile tab: liked tracks, purchases, a
+ * playlist or an album (see [TrackListSource] for the `source` values).
+ */
+@Serializable
+data class TrackListDestination(val source: String, val id: String, val title: String)
 
 /** The top-level tabs shown in the floating capsule. */
 private enum class BottomTab(
@@ -114,7 +122,23 @@ fun NumeApp() {
                 )
             }
             composable<Search> { SearchScreen() }
-            composable<Profile> { ProfileScreen() }
+            composable<Profile> {
+                ProfileScreen(
+                    onOpenTracks = { source, id, title ->
+                        navController.navigate(TrackListDestination(source, id, title))
+                    },
+                )
+            }
+            composable<TrackListDestination> { entry ->
+                val args = entry.toRoute<TrackListDestination>()
+                TrackListScreen(
+                    source = args.source,
+                    id = args.id,
+                    title = args.title,
+                    onBack = { navController.popBackStack() },
+                    onOpenPlayer = { navController.navigate(Player) },
+                )
+            }
             composable<Player> { PlayerScreen() }
         }
 

@@ -26,17 +26,19 @@ ui/
 ├── theme/         # 主题（颜色/字体/尺寸）
 ├── library/       # 排行榜列表（LibraryScreen + LibraryViewModel）
 ├── chart/         # 单榜曲目列表（ChartDetailScreen + ChartDetailViewModel）
+├── profile/       # 我的（ProfileViewModel：登录态+区块数据；TrackListViewModel：曲目列表）
 └── screens/       # 布局主体（哑组件，跨功能）
     ├── HomeScreen.kt        # 探索 tab 的占位首页（纯展示）
     ├── LibraryScreen.kt
     ├── ChartDetailScreen.kt
     ├── PlayerScreen.kt
     ├── SearchScreen.kt      # 搜索 tab 占位（纯展示，待实现）
-    └── ProfileScreen.kt     # 我的 tab 占位（纯展示，待实现）
+    ├── ProfileScreen.kt     # 我的：登录入口 + 喜欢/已购/歌单区块 + 登录对话框
+    └── TrackListScreen.kt   # 通用曲目列表（喜欢/已购/歌单/专辑，可整单播放）
 
 core/
 ├── net/           # libnetease JNI 网关（数据出口）
-├── repo/          # Repository：取/转换数据
+├── repo/          # Repository：取/转换数据（ChartRepository / ProfileRepository）
 └── playback/      # ExoPlayer / 字节缓存 / 播放服务 / 启动器
 ```
 
