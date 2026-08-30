@@ -255,12 +255,17 @@ private fun TrackListHeader(
                 .clip(RoundedCornerShape(20.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
         ) {
-            if (collection.coverUrl != null) {
+            // model 整体 remember：AsyncImagePainter 以 model 为 key，每次重组新建
+            // ImageRequest 会重走请求分发；按 480px（240dp 封面 @2x）尺寸构造并缓存。
+            val context = LocalContext.current
+            val cover = remember(collection.coverUrl) {
+                collection.coverUrl?.let {
+                    ImageRequest.Builder(context).data(it).size(480).build()
+                }
+            }
+            if (cover != null) {
                 AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(Uri.parse(collection.coverUrl))
-                        .size(480)
-                        .build(),
+                    model = cover,
                     contentDescription = collection.name,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
@@ -363,8 +368,14 @@ private val trackRowBaseModifier = Modifier
 
 @Composable
 private fun TrackRow(index: Int, track: Track, onClick: () -> Unit) {
-    // Uri.parse 每次重组都跑一遍是纯浪费；按 48dp 封面目标尺寸（约 96px@xxhdpi）请求。
-    val artworkUri = remember(track.artworkUrl) { track.artworkUrl?.let { Uri.parse(it) } }
+    // model 整体 remember：AsyncImagePainter 以 model 为 key，每次重组新建 ImageRequest
+    // 会重走请求分发；按 96px（48dp 封面 @2x）尺寸构造并缓存。
+    val context = LocalContext.current
+    val artwork = remember(track.artworkUrl) {
+        track.artworkUrl?.let {
+            ImageRequest.Builder(context).data(it).size(96).build()
+        }
+    }
     Row(
         modifier = trackRowBaseModifier
             .clickable(onClick = onClick)
@@ -384,12 +395,9 @@ private fun TrackRow(index: Int, track: Track, onClick: () -> Unit) {
                 .clip(RoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
         ) {
-            if (track.artworkUrl != null) {
+            if (artwork != null) {
                 AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(artworkUri)
-                        .size(96)
-                        .build(),
+                    model = artwork,
                     contentDescription = track.name,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),

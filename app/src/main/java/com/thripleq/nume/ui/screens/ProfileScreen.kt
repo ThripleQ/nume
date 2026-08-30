@@ -35,6 +35,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -363,12 +364,17 @@ private fun PlaylistCell(
                 .height(160.dp)
                 .clip(RoundedCornerShape(12.dp)),
         ) {
-            if (playlist.coverUrl != null) {
+            // model 整体 remember：AsyncImagePainter 以 model 为 key，避免每次重组
+            // 新建 ImageRequest 重走请求分发；按 320px（160dp 封面 @2x）尺寸请求。
+            val context = LocalContext.current
+            val model = remember(playlist.coverUrl) {
+                playlist.coverUrl?.let {
+                    ImageRequest.Builder(context).data(it).size(320).build()
+                }
+            }
+            if (model != null) {
                 AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(Uri.parse(playlist.coverUrl))
-                        .size(320)
-                        .build(),
+                    model = model,
                     contentDescription = playlist.name,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
