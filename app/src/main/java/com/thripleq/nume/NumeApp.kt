@@ -225,7 +225,7 @@ fun NumeApp() {
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
-                .padding(vertical = 14.dp),
+                .padding(14.dp),
         ) {
             PlayerCapsule(
                 navVisible = isTabPage,

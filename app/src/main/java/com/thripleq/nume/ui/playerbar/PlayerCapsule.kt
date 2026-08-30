@@ -240,7 +240,8 @@ fun PlayerCapsule(
         label = "barOffset",
     )
 
-    val islandWidth = LocalConfiguration.current.screenWidthDp.dp * 7f / 8f
+    // 岛宽 = 屏宽 − 2×14dp：左右边距与 NumeApp 外层 padding(14.dp) 的底部边距一致。
+    val islandWidth = LocalConfiguration.current.screenWidthDp.dp - 28.dp
 
     Box(
         modifier = modifier
