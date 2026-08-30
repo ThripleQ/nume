@@ -25,22 +25,14 @@ import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -59,47 +51,29 @@ import com.thripleq.nume.ui.profile.ProfileUiState
 import com.thripleq.nume.ui.profile.ProfileViewModel
 
 /**
- * 我的 tab：未登录时是登录入口（Cookie 粘贴 / 短信验证码）；登录后展示
+ * 我的 tab：未登录时点登录卡片直接打开官方网页登录；登录后展示
  * 用户卡片 + 四个区块（喜欢的音乐 / 已购 / 收藏的歌单 / 创建的歌单）。
  */
 @Composable
 fun ProfileScreen(
     onOpenTracks: (source: String, id: String, title: String) -> Unit,
+    onWebLogin: () -> Unit,
 ) {
     val vm: ProfileViewModel = hiltViewModel()
     val state by vm.uiState.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
-    var showLogin by rememberSaveable { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Spacer(Modifier.height(20.dp))
         when (val s = state) {
             ProfileUiState.Loading -> LoadingRow(busy)
             is ProfileUiState.Error -> ErrorRow { vm.refresh() }
-            ProfileUiState.LoggedOut -> LoggedOutHeader(busy) { showLogin = true }
+            ProfileUiState.LoggedOut -> LoggedOutHeader(busy, onWebLogin)
             is ProfileUiState.LoggedIn -> LoggedInContent(
                 data = s.data,
                 onOpenTracks = onOpenTracks,
             )
         }
-    }
-
-    if (showLogin) {
-        LoginDialog(
-            busy = busy,
-            onDismiss = { showLogin = false },
-            onImportCookies = { cookie ->
-                vm.importCookies(cookie) { ok ->
-                    if (ok) showLogin = false
-                }
-            },
-            onSendCaptcha = { phone -> vm.sendCaptcha(phone) { } },
-            onLoginWithCaptcha = { phone, code ->
-                vm.loginWithCaptcha(phone, code) { ok ->
-                    if (ok) showLogin = false
-                }
-            },
-        )
     }
 }
 
@@ -124,30 +98,41 @@ private fun ErrorRow(onRetry: () -> Unit) {
 
 @Composable
 private fun LoggedOutHeader(busy: Boolean, onLogin: () -> Unit) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+            .clickable(enabled = !busy) { onLogin() },
+        shape = RoundedCornerShape(16.dp),
     ) {
-        Icon(
-            imageVector = Icons.Filled.AccountCircle,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(64.dp),
-        )
-        Spacer(Modifier.width(16.dp))
-        Column(Modifier.weight(1f)) {
-            Text("未登录", style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "登录后同步喜欢、已购与歌单",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 24.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.AccountCircle,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(56.dp),
             )
-        }
-        OutlinedButton(onClick = onLogin, enabled = !busy) {
-            Icon(Icons.Filled.Person, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("登录")
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text("登录网易云", style = MaterialTheme.typography.titleLarge)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "使用官方网页登录，同步喜欢 / 已购 / 歌单",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(
+                imageVector = Icons.Filled.Person,
+                contentDescription = "登录",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp),
+            )
         }
     }
 }
@@ -462,120 +447,3 @@ private fun AlbumRow(album: Album, onClick: () -> Unit) {
     }
 }
 
-/* ── login dialog ──────────────────────────────────────── */
-
-@Composable
-private fun LoginDialog(
-    busy: Boolean,
-    onDismiss: () -> Unit,
-    onImportCookies: (String) -> Unit,
-    onSendCaptcha: (String) -> Unit,
-    onLoginWithCaptcha: (String, String) -> Unit,
-) {
-    var tab by rememberSaveable { mutableStateOf(0) }
-    AlertDialog(
-        onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text("登录网易云账号") },
-        text = {
-            Column {
-                TabRow(selectedTabIndex = tab) {
-                    Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Cookie") })
-                    Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("短信") })
-                }
-                Spacer(Modifier.height(12.dp))
-                when (tab) {
-                    0 -> CookieTab(busy, onImportCookies)
-                    else -> SmsTab(busy, onSendCaptcha, onLoginWithCaptcha)
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !busy) { Text("取消") }
-        },
-    )
-}
-
-@Composable
-private fun CookieTab(busy: Boolean, onImport: (String) -> Unit) {
-    var cookie by rememberSaveable { mutableStateOf("") }
-    Column {
-        Text(
-            "在浏览器登录 music.163.com 后，从开发者工具复制 Cookie（需含 MUSIC_U）。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = cookie,
-            onValueChange = { cookie = it },
-            placeholder = { Text("MUSIC_U=xxx; __csrf=yyy; …") },
-            minLines = 3,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(12.dp))
-        OutlinedButton(
-            onClick = { onImport(cookie.trim()) },
-            enabled = !busy && cookie.isNotBlank(),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            if (busy) {
-                CircularProgressIndicator(Modifier.size(16.dp))
-            } else {
-                Text("导入并登录")
-            }
-        }
-    }
-}
-
-@Composable
-private fun SmsTab(
-    busy: Boolean,
-    onSend: (String) -> Unit,
-    onLogin: (String, String) -> Unit,
-) {
-    var phone by rememberSaveable { mutableStateOf("") }
-    var code by rememberSaveable { mutableStateOf("") }
-    var sent by rememberSaveable { mutableStateOf(false) }
-    Column {
-        OutlinedTextField(
-            value = phone,
-            onValueChange = { phone = it.filter(Char::isDigit).take(11) },
-            label = { Text("手机号") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = code,
-                onValueChange = { code = it.filter(Char::isDigit).take(6) },
-                label = { Text("验证码") },
-                singleLine = true,
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(Modifier.width(8.dp))
-            OutlinedButton(
-                onClick = {
-                    sent = true
-                    onSend(phone)
-                },
-                enabled = !busy && phone.length == 11,
-            ) {
-                Text(if (sent) "重发" else "发送")
-            }
-        }
-        Spacer(Modifier.height(12.dp))
-        OutlinedButton(
-            onClick = { onLogin(phone, code) },
-            enabled = !busy && phone.length == 11 && code.length == 6,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            if (busy) {
-                CircularProgressIndicator(Modifier.size(16.dp))
-            } else {
-                Text("登录")
-            }
-        }
-    }
-}

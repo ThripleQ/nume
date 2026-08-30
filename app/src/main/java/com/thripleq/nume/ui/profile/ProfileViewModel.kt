@@ -82,43 +82,20 @@ class ProfileViewModel @Inject constructor(
         _uiState.value = ProfileUiState.LoggedIn(data)
     }
 
-    /** Imports a browser cookie string and re-checks login; true if it worked. */
-    fun importCookies(cookieStr: String, onDone: (Boolean) -> Unit) {
+    /** Completes login from an in-app WebView session (official login page). */
+    fun webLoginCookies(cookieStr: String, onDone: (Boolean, String) -> Unit) {
         viewModelScope.launch {
             _busy.value = true
             gateway.importCookies(cookieStr)
             val account = repository.account()
             _busy.value = false
             if (account == null) {
-                onDone(false)
+                onDone(false, "登录态无效，请重试")
                 _uiState.value = ProfileUiState.LoggedOut
             } else {
-                onDone(true)
+                onDone(true, "")
                 loadProfile(account)
             }
-        }
-    }
-
-    /** Sends the SMS code; true when the server accepted (code 200). */
-    fun sendCaptcha(phone: String, onResult: (Boolean) -> Unit) {
-        viewModelScope.launch {
-            onResult(repository.sendCaptcha(phone))
-        }
-    }
-
-    /** Logs in with the SMS code; on success reloads the profile. */
-    fun loginWithCaptcha(phone: String, captcha: String, onDone: (Boolean) -> Unit) {
-        viewModelScope.launch {
-            _busy.value = true
-            val ok = repository.loginWithCaptcha(phone, captcha)
-            _busy.value = false
-            if (!ok) {
-                onDone(false)
-                return@launch
-            }
-            onDone(true)
-            val account = repository.account()
-            if (account != null) loadProfile(account) else _uiState.value = ProfileUiState.LoggedOut
         }
     }
 }

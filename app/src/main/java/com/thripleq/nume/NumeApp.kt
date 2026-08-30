@@ -43,6 +43,7 @@ import com.thripleq.nume.ui.screens.PlayerScreen
 import com.thripleq.nume.ui.screens.ProfileScreen
 import com.thripleq.nume.ui.screens.SearchScreen
 import com.thripleq.nume.ui.screens.TrackListScreen
+import com.thripleq.nume.ui.screens.WebLoginScreen
 import kotlinx.serialization.Serializable
 
 /** Type-safe navigation destinations. Navigation lives only in [NumeApp]. */
@@ -71,6 +72,10 @@ data class ChartDestination(val chartId: String, val name: String)
  */
 @Serializable
 data class TrackListDestination(val source: String, val id: String, val title: String)
+
+/** Full-screen WebView login (official NetEase login page, Kanade-style). */
+@Serializable
+object WebLogin
 
 /** The top-level tabs shown in the floating capsule. */
 private enum class BottomTab(
@@ -127,6 +132,13 @@ fun NumeApp() {
                     onOpenTracks = { source, id, title ->
                         navController.navigate(TrackListDestination(source, id, title))
                     },
+                    onWebLogin = { navController.navigate(WebLogin) },
+                )
+            }
+            composable<WebLogin> {
+                WebLoginScreen(
+                    onDone = { navController.popBackStack() },
+                    onBack = { navController.popBackStack() },
                 )
             }
             composable<TrackListDestination> { entry ->

@@ -1,5 +1,6 @@
 package com.thripleq.nume.core.net
 
+import android.util.Log
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -34,6 +35,8 @@ class NetEaseGateway(
     /** Runs one libnetease service call, blocking on [io] while it round-trips. */
     suspend fun call(op: Int, vararg args: String): ApiResult =
         withContext(io) {
-            synchronized(lock) { NumeNative.request(op, args) }
+            val r = synchronized(lock) { NumeNative.request(op, args) }
+            Log.d("NetEaseGateway", "op=$op args=${args.joinToString(",")} -> code=${r.code} err=${r.err} body=${r.body.take(200)}")
+            r
         }
 }

@@ -183,19 +183,6 @@ class ProfileRepository @Inject constructor(
         }
     }
 
-    /** Sends the SMS login code to [phone]; returns true on code 200. */
-    suspend fun sendCaptcha(phone: String): Boolean = withContext(Dispatchers.IO) {
-        val r = gateway.call(NeteaseOp.SEND_CAPTCHA, phone, "86")
-        r.err == 0 && r.code == 200.0
-    }
-
-    /** Logs in with the SMS code; returns true on code 200. */
-    suspend fun loginWithCaptcha(phone: String, captcha: String): Boolean =
-        withContext(Dispatchers.IO) {
-            val r = gateway.call(NeteaseOp.LOGIN_CELLPHONE_CAPTCHA, phone, captcha, "86")
-            r.err == 0 && r.code == 200.0
-        }
-
     // ── helpers ────────────────────────────────────────────
 
     private suspend fun rawIds(op: Int, arg: String): List<String>? {
