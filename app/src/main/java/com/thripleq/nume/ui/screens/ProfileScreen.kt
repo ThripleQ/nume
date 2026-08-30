@@ -40,11 +40,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.thripleq.nume.core.repo.Account
 import com.thripleq.nume.core.repo.Album
 import com.thripleq.nume.core.repo.PlaylistSummary
@@ -150,60 +152,60 @@ private fun LoggedInContent(
     // (Material You 在某些设备/壁纸下派生的 onBackground 偏深, 不指定 color
     // 的 Text 会显示成接近背景的颜色, 在深色主题下看不清)
     CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState()),
-    ) {
-        UserCard(data.account)
-        Spacer(Modifier.height(16.dp))
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
+        ) {
+            UserCard(data.account)
+            Spacer(Modifier.height(16.dp))
 
-        SectionRow(
-            icon = Icons.Filled.Favorite,
-            title = "喜欢的音乐",
-            count = data.likedCount,
-            onClick = { onOpenTracks("liked", data.account.uid.toString(), "喜欢的音乐") },
-        )
-        SectionRow(
-            icon = Icons.Filled.ShoppingCart,
-            title = "已购",
-            count = data.purchasedSongCount + data.purchasedAlbums.size,
-            onClick = { onOpenTracks("purchased", "", "已购") },
-        )
-
-        if (data.purchasedAlbums.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "已购专辑",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+            SectionRow(
+                icon = Icons.Filled.Favorite,
+                title = "喜欢的音乐",
+                count = data.likedCount,
+                onClick = { onOpenTracks("liked", data.account.uid.toString(), "喜欢的音乐") },
             )
-            Spacer(Modifier.height(8.dp))
-            data.purchasedAlbums.forEach { album ->
-                AlbumRow(album) {
-                    onOpenTracks("album", album.id, album.name)
+            SectionRow(
+                icon = Icons.Filled.ShoppingCart,
+                title = "已购",
+                count = data.purchasedSongCount + data.purchasedAlbums.size,
+                onClick = { onOpenTracks("purchased", "", "已购") },
+            )
+
+            if (data.purchasedAlbums.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "已购专辑",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(Modifier.height(8.dp))
+                data.purchasedAlbums.forEach { album ->
+                    AlbumRow(album) {
+                        onOpenTracks("album", album.id, album.name)
+                    }
+                }
+            }
+
+            if (data.createdPlaylists.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                SectionHeader("创建的歌单", data.createdPlaylists.size)
+                Spacer(Modifier.height(8.dp))
+                PlaylistGrid(data.createdPlaylists) { id, name ->
+                    onOpenTracks("playlist", id, name)
+                }
+            }
+
+            if (data.subscribedPlaylists.isNotEmpty()) {
+                Spacer(Modifier.height(16.dp))
+                SectionHeader("收藏的歌单", data.subscribedPlaylists.size)
+                Spacer(Modifier.height(8.dp))
+                PlaylistGrid(data.subscribedPlaylists) { id, name ->
+                    onOpenTracks("playlist", id, name)
                 }
             }
         }
-
-        if (data.createdPlaylists.isNotEmpty()) {
-            Spacer(Modifier.height(12.dp))
-            SectionHeader("创建的歌单", data.createdPlaylists.size)
-            Spacer(Modifier.height(8.dp))
-            PlaylistGrid(data.createdPlaylists) { id, name ->
-                onOpenTracks("playlist", id, name)
-            }
-        }
-
-        if (data.subscribedPlaylists.isNotEmpty()) {
-            Spacer(Modifier.height(16.dp))
-            SectionHeader("收藏的歌单", data.subscribedPlaylists.size)
-            Spacer(Modifier.height(8.dp))
-            PlaylistGrid(data.subscribedPlaylists) { id, name ->
-                onOpenTracks("playlist", id, name)
-            }
-        }
-    }
     }
 }
 
@@ -363,7 +365,10 @@ private fun PlaylistCell(
         ) {
             if (playlist.coverUrl != null) {
                 AsyncImage(
-                    model = Uri.parse(playlist.coverUrl),
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(Uri.parse(playlist.coverUrl))
+                        .size(320)
+                        .build(),
                     contentDescription = playlist.name,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),

@@ -267,7 +267,7 @@ static jobject native_request(JNIEnv *env, jobject thiz, jint op,
     jbyteArray jb = (*env)->NewByteArray(env, blen);
     (*env)->SetByteArrayRegion(env, jb, 0, blen, (const jbyte *)body);
     jobject res = (*env)->NewObject(env, g_apiresult_cls, g_apiresult_ctor,
-                                    (jdouble)r->code, (jint)r->err, jb);
+                                    (jint)r->code, (jint)r->err, jb);
     (*env)->DeleteLocalRef(env, jb);
     ne_resp_free(r);
     return res;
@@ -306,7 +306,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
                                         "[Ljava/lang/String;");
     g_apiresult_cls = (*e)->NewGlobalRef(e,
         (*e)->FindClass(e, NE_NS "ApiResult"));
-    g_apiresult_ctor = (*e)->GetMethodID(e, g_apiresult_cls, "<init>", "(DI[B)V");
+    g_apiresult_ctor = (*e)->GetMethodID(e, g_apiresult_cls, "<init>", "(II[B)V");
 
     ne_http_set_transport(&g_jni_transport);
     return JNI_VERSION_1_6;

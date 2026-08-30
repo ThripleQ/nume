@@ -22,10 +22,9 @@ data class TrackCollection(
 
 /**
  * 从 /weapi/v3/playlist/detail 返回的 playlist 对象解析壳元数据 + 曲目。
- * 榜单 id 就是歌单 id，两者共用此解析；tracks 的解析与
- * [ProfileRepository]/[ChartRepository] 内的一致（ar/al 结构）。
+ * 榜单 id 就是歌单 id，两者共用此解析；曲目用共享的 [parseTracks]。
  */
-fun parsePlaylistObject(obj: JSONObject, parseTracks: (org.json.JSONArray?) -> List<Track>): TrackCollection {
+fun parsePlaylistObject(obj: JSONObject): TrackCollection {
     val id = obj.optLong("id", 0L)
     val creator = obj.optJSONObject("creator")?.optString("nickname")
         ?.takeIf { it.isNotBlank() } ?: ""
@@ -45,7 +44,7 @@ fun parsePlaylistObject(obj: JSONObject, parseTracks: (org.json.JSONArray?) -> L
 
 /** 从 /weapi/v1/album/{id} 的响应解析专辑壳。该接口顶层只有 songs，没有
  *  album 对象；专辑元数据（名称/封面/歌手/曲目数）从首曲的 al/ar 推断。 */
-fun parseAlbumObject(root: JSONObject, parseTracks: (org.json.JSONArray?) -> List<Track>): TrackCollection {
+fun parseAlbumObject(root: JSONObject): TrackCollection {
     val songsArr = root.optJSONArray("songs")
     val tracks = parseTracks(songsArr)
     val first = songsArr?.optJSONObject(0)

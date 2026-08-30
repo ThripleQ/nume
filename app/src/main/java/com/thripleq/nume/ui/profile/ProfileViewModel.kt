@@ -70,13 +70,14 @@ class ProfileViewModel @Inject constructor(
         val purchasedSongs = async { repository.purchasedSongs() }
         val purchasedAlbums = async { repository.purchasedAlbums() }
         val playlists = async { repository.playlists(account.uid) }
+        val (subscribedPlaylists, createdPlaylists) = playlists.await()
         val data = ProfileData(
             account = account,
             likedCount = liked.await().size,
             purchasedSongCount = purchasedSongs.await().size,
             purchasedAlbums = purchasedAlbums.await(),
-            subscribedPlaylists = playlists.await().first,
-            createdPlaylists = playlists.await().second,
+            subscribedPlaylists = subscribedPlaylists,
+            createdPlaylists = createdPlaylists,
         )
         _busy.value = false
         _uiState.value = ProfileUiState.LoggedIn(data)

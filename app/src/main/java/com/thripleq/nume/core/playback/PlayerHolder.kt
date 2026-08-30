@@ -25,7 +25,12 @@ object PlayerHolder {
     @Volatile
     private var player: ExoPlayer? = null
 
-    private val recoveryScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    // 错误恢复用的协程作用域。object 单例的普通属性在类初始化时就求值；
+    // 用 lazy 推迟到首次真正需要时再取 Main dispatcher，避免在非 UI 线程
+    // （如无 Looper 的工作线程）首次触碰对象导致 Main.immediate 初始化失败。
+    private val recoveryScope by lazy {
+        CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    }
     private var recoveryJob: Job? = null
 
     fun get(context: Context): ExoPlayer = player ?: synchronized(this) {

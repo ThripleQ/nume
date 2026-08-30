@@ -32,7 +32,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.hilt.navigation.compose.hiltViewModel
 import com.thripleq.nume.ui.profile.ProfileViewModel
 
 /**
@@ -48,7 +47,7 @@ import com.thripleq.nume.ui.profile.ProfileViewModel
 fun WebLoginScreen(
     onDone: () -> Unit,
     onBack: () -> Unit,
-    vm: ProfileViewModel = hiltViewModel(),
+    vm: ProfileViewModel,
 ) {
     var error by remember { mutableStateOf<String?>(null) }
     val finished = remember { mutableStateOf(false) }

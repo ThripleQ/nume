@@ -9,14 +9,6 @@ import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
 
-data class Track(
-    val id: String,
-    val name: String,
-    val artist: String,
-    val artworkUrl: String?,
-    val durationMs: Long,
-)
-
 data class Chart(
     val id: String,
     val name: String,
@@ -64,27 +56,6 @@ class ChartRepository @Inject constructor(
         }
     }
 
-    private fun parseTracks(arr: org.json.JSONArray?): List<Track> {
-        if (arr == null) return emptyList()
-        return buildList {
-            for (i in 0 until arr.length()) {
-                val s = arr.optJSONObject(i) ?: continue
-                val id = s.optLong("id", 0L)
-                if (id <= 0) continue
-                add(
-                    Track(
-                        id = id.toString(),
-                        name = s.optString("name"),
-                        artist = s.optJSONArray("ar")?.optJSONObject(0)?.optString("name") ?: "",
-                        artworkUrl = s.optJSONObject("al")?.optString("picUrl")
-                            ?.takeIf { it.isNotBlank() },
-                        durationMs = s.optLong("dt", 0L),
-                    ),
-                )
-            }
-        }
-    }
-
     /**
      * 一个榜单的完整壳（元数据 + 曲目）。匿名 /weapi/toplist/detail 里
      * per-chart 的 `tracks` 预览是空的；榜单 id 本身就是歌单 id，改从
@@ -99,7 +70,7 @@ class ChartRepository @Inject constructor(
         try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
             val playlist = root.optJSONObject("playlist") ?: return@withContext null
-            parsePlaylistObject(playlist, ::parseTracks)
+            parsePlaylistObject(playlist)
         } catch (_: Exception) {
             null
         }

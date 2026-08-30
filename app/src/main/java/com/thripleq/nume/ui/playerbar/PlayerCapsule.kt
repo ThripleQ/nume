@@ -43,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -58,6 +59,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -88,72 +90,109 @@ data class PlayerUiState(
     val errorText: String? = null,
 )
 
-/** Observes [player] (process-scoped singleton) with a metadata listener + 250ms poll.
- *  [positionFrozen] lets callers (full-screen player during a seek drag) pin the
- *  reported position so the poll doesn't fight the thumb. */
+/**
+ * Observes [player] (process-scoped singleton) with a metadata listener + 250ms poll.
+ * 状态拆成两个 snapshot：元数据/播放态（低频，标题/封面/是否播放/时长/有无曲目）
+ * 和进度 positionMs（高频）。轮询只写 positionMs；meta 仅在真实变化时才写，
+ * 避免每 250ms 复制整个状态对象触发无谓重组。
+ * [positionFrozen] lets callers (full-screen player during a seek drag) pin the
+ * reported position so the poll doesn't fight the thumb.
+ */
 @Composable
 fun rememberPlayerState(
     player: Player,
     positionFrozen: () -> Boolean = { false },
 ): PlayerUiState {
-    var state by remember { mutableStateOf(PlayerUiState()) }
+    var meta by remember { mutableStateOf(PlayerUiState()) }
+    var positionMs by remember { mutableLongStateOf(0L) }
+
     LaunchedEffect(player) {
         val listener = object : Player.Listener {
-            override fun onMediaMetadataChanged(meta: MediaMetadata) {
-                state = state.copy(
-                    title = meta.title?.toString() ?: "",
-                    artist = meta.artist?.toString() ?: "",
-                    coverUrl = meta.artworkUri?.toString(),
+            override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
+                meta = meta.copy(
+                    title = mediaMetadata.title?.toString() ?: "",
+                    artist = mediaMetadata.artist?.toString() ?: "",
+                    coverUrl = mediaMetadata.artworkUri?.toString(),
                     errorText = null,
                 )
             }
 
             override fun onIsPlayingChanged(playing: Boolean) {
-                state = state.copy(isPlaying = playing)
+                meta = meta.copy(isPlaying = playing)
             }
 
             override fun onPlaybackStateChanged(s: Int) {
-                state = state.copy(isBuffering = s == Player.STATE_BUFFERING)
+                meta = meta.copy(isBuffering = s == Player.STATE_BUFFERING)
                 if (s == Player.STATE_READY) {
-                    state = state.copy(durationMs = player.duration.coerceAtLeast(0L))
+                    meta = meta.copy(durationMs = player.duration.coerceAtLeast(0L))
                 }
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                state = state.copy(errorText = error.errorCodeName ?: error.message)
+                meta = meta.copy(errorText = error.errorCodeName ?: error.message)
             }
         }
         player.addListener(listener)
         // Seed everything from the player's current state so the UI reflects
         // reality the moment it appears (e.g. already playing when the screen
         // opens) instead of defaulting to "not playing".
-        val meta = player.mediaMetadata
-        state = PlayerUiState(
-            title = meta.title?.toString() ?: "",
-            artist = meta.artist?.toString() ?: "",
-            coverUrl = meta.artworkUri?.toString(),
+        val mediaMetadata = player.mediaMetadata
+        meta = PlayerUiState(
+            title = mediaMetadata.title?.toString() ?: "",
+            artist = mediaMetadata.artist?.toString() ?: "",
+            coverUrl = mediaMetadata.artworkUri?.toString(),
             isPlaying = player.isPlaying,
             isBuffering = player.playbackState == Player.STATE_BUFFERING,
-            positionMs = player.currentPosition,
             durationMs = player.duration.coerceAtLeast(0L),
             hasTrack = player.currentMediaItem != null,
         )
+        positionMs = player.currentPosition
         try {
             while (true) {
-                if (!positionFrozen()) {
-                    state = state.copy(positionMs = player.currentPosition)
+                if (!positionFrozen()) positionMs = player.currentPosition
+                // hasTrack / duration 由 listener 与这里共同维护；只在真实变化时写 meta。
+                val hasTrack = player.currentMediaItem != null
+                val duration = player.duration.coerceAtLeast(0L)
+                if (meta.hasTrack != hasTrack || meta.durationMs != duration) {
+                    meta = meta.copy(hasTrack = hasTrack, durationMs = duration)
                 }
-                state = state.copy(
-                    hasTrack = player.currentMediaItem != null,
-                    durationMs = player.duration.coerceAtLeast(0L),
-                )
                 delay(250)
             }
         } finally {
             player.removeListener(listener)
         }
     }
-    return state
+    return meta.copy(positionMs = positionMs)
+}
+
+/**
+ * 轻量订阅"播放器当前是否持有曲目"（用于岛显隐），独立于高频进度轮询：
+ * 调用方（NumeApp）只订阅这里，不会随 250ms 进度刷新而重组。
+ */
+@Composable
+fun rememberHasTrack(player: Player): Boolean {
+    var hasTrack by remember { mutableStateOf(player.currentMediaItem != null) }
+    LaunchedEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                hasTrack = player.currentMediaItem != null
+            }
+        }
+        player.addListener(listener)
+        hasTrack = player.currentMediaItem != null
+        try {
+            while (true) {
+                // 兜底：占位 MediaItem 的 transition 在部分流程不触发，定期核对。
+                if (hasTrack != (player.currentMediaItem != null)) {
+                    hasTrack = player.currentMediaItem != null
+                }
+                delay(500)
+            }
+        } finally {
+            player.removeListener(listener)
+        }
+    }
+    return hasTrack
 }
 
 /**
@@ -166,7 +205,6 @@ fun rememberPlayerState(
 fun PlayerCapsule(
     navVisible: Boolean,
     selected: BottomTab,
-    playerState: PlayerUiState,
     player: Player,
     onSelectTab: (BottomTab) -> Unit,
     onOpenPlayer: () -> Unit,
@@ -175,6 +213,7 @@ fun PlayerCapsule(
     onPlaceholderAction: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    val playerState = rememberPlayerState(player)
     val shape = RoundedCornerShape(28.dp)
     val barHeight = 60.dp
     val navSectionHeight = 57.dp

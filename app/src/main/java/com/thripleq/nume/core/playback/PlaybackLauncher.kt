@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import com.thripleq.nume.BuildConfig
 import com.thripleq.nume.core.net.NetEaseGateway
 import com.thripleq.nume.core.net.NeteaseOp
 import com.thripleq.nume.core.repo.Track
@@ -13,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -31,7 +33,10 @@ class PlaybackLauncher @Inject constructor(
     private val gateway: NetEaseGateway,
 ) {
     // id -> 已解析 url（失败也缓存 null，避免同一首歌反复请求）。
-    private val urlCache = ConcurrentHashMap<String, String?>()
+    // 网易云音频 url 有时效性，缓存带 TTL：过期后重新解析，避免回退到旧链接。
+    private data class CachedUrl(val url: String?, val at: Long)
+
+    private val urlCache = ConcurrentHashMap<String, CachedUrl>()
 
     // 后台补队列只在主线程触碰 ExoPlayer（非线程安全），网络解析在 IO。
     private val enqueueScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -91,15 +96,22 @@ class PlaybackLauncher @Inject constructor(
         enqueueJob = enqueueScope.launch {
             val player = PlayerHolder.get(context)
             val n = tracks.size
-            val order = buildList {
-                for (i in start + 1 until n) add(i)
-                for (i in 0 until start) add(i)
-            }
-            for (i in order) {
-                if (!isActive) break
-                val url = songUrlCached(tracks[i].id)
-                if (url != null) {
-                    player.addMediaItem(buildMediaItem(tracks[i], url))
+            // 从 start 后一首开始，绕一圈到 start 前一首（追尾），保持整单顺序。
+            var next = start + 1
+            val end = start + n
+            while (isActive) {
+                val behind = player.mediaItemCount - player.currentMediaItemIndex - 1
+                if (next < end && behind < PREFETCH_LOOKAHEAD) {
+                    // 队列尾部快被播到，才解析下一首：请求随播放节奏稀疏发放，
+                    // 不再整单一次性轰炸（JNI 加解密 CPU 密集 × 100+ 首会跟 UI 抢调度）。
+                    val idx = next % n
+                    next++
+                    val url = songUrlCached(tracks[idx].id)
+                    if (url != null) {
+                        player.addMediaItem(buildMediaItem(tracks[idx], url))
+                    }
+                } else {
+                    delay(PREFETCH_POLL_MS)
                 }
             }
         }
@@ -120,9 +132,12 @@ class PlaybackLauncher @Inject constructor(
     }
 
     private suspend fun songUrlCached(id: String): String? {
-        if (urlCache.containsKey(id)) return urlCache[id]
+        val now = System.currentTimeMillis()
+        urlCache[id]?.let { hit ->
+            if (now - hit.at < CACHE_TTL_MS) return hit.url
+        }
         val url = songUrl(id)
-        urlCache[id] = url
+        urlCache[id] = CachedUrl(url, now)
         return url
     }
 
@@ -166,7 +181,9 @@ class PlaybackLauncher @Inject constructor(
         // the account / track is not entitled to it (e.g. anon access).
         for (quality in listOf("exhigh", "standard")) {
             val r = gateway.call(NeteaseOp.SONG_URL_V1, id, quality)
-            android.util.Log.e("ProfileDiag", "songUrl id=$id q=$quality code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(300)}")
+            if (BuildConfig.DEBUG) {
+                android.util.Log.e("ProfileDiag", "songUrl id=$id q=$quality code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(300)}")
+            }
             val url = parseUrl(r)
             if (url != null) return@withContext url
         }
@@ -185,5 +202,11 @@ class PlaybackLauncher @Inject constructor(
 
     companion object {
         private val PLACEHOLDER_URI = Uri.parse("file:///tmp/nume_placeholder.mp3")
+        // 音频 url 有效期数小时，缓存 6h 后重新解析。
+        private const val CACHE_TTL_MS = 6 * 60 * 60 * 1000L
+        // 队列中始终保留的"已就绪后续曲目"数量：播到不足就预解析下一首。
+        private const val PREFETCH_LOOKAHEAD = 5
+        // 按需预缓冲的轮询间隔：进度推进才补，无需高频。
+        private const val PREFETCH_POLL_MS = 500L
     }
 }

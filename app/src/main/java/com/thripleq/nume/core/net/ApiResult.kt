@@ -7,7 +7,7 @@ package com.thripleq.nume.core.net
  * body has no `code` field.
  */
 class ApiResult(
-    @JvmField val code: Double,
+    @JvmField val code: Int,
     @JvmField val err: Int,
     @JvmField val body: ByteArray,
 )

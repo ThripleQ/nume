@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.thripleq.nume.core.repo.Track
 import com.thripleq.nume.core.repo.TrackCollection
 import com.thripleq.nume.ui.playerbar.CollectionActions
@@ -188,7 +189,10 @@ private fun TrackListHeader(
         ) {
             if (collection.coverUrl != null) {
                 AsyncImage(
-                    model = Uri.parse(collection.coverUrl),
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(Uri.parse(collection.coverUrl))
+                        .size(480)
+                        .build(),
                     contentDescription = collection.name,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
@@ -284,13 +288,18 @@ private fun trimZero(s: String) = if (s.endsWith(".0")) s.dropLast(2) else s
 
 /* ── 列表项：序号 + 封面 + 歌名/歌手 + 三点菜单 ───────── */
 
+/** 行级不可变基础 modifier（fillMaxWidth + 圆角裁剪），避免每次重组重建 modifier 链。 */
+private val trackRowBaseModifier = Modifier
+    .fillMaxWidth()
+    .clip(RoundedCornerShape(10.dp))
+
 @Composable
 private fun TrackRow(index: Int, track: Track, onClick: () -> Unit) {
+    // Uri.parse 每次重组都跑一遍是纯浪费；按 48dp 封面目标尺寸（约 96px@xxhdpi）请求。
+    val artworkUri = remember(track.artworkUrl) { track.artworkUrl?.let { Uri.parse(it) } }
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .clickable { onClick() }
+        modifier = trackRowBaseModifier
+            .clickable(onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -309,7 +318,10 @@ private fun TrackRow(index: Int, track: Track, onClick: () -> Unit) {
         ) {
             if (track.artworkUrl != null) {
                 AsyncImage(
-                    model = Uri.parse(track.artworkUrl),
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(artworkUri)
+                        .size(96)
+                        .build(),
                     contentDescription = track.name,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),

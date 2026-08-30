@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,7 +36,7 @@ import com.thripleq.nume.core.playback.PlayerHolder
 import com.thripleq.nume.core.repo.TrackCollection
 import com.thripleq.nume.ui.playerbar.BottomTab
 import com.thripleq.nume.ui.playerbar.PlayerCapsule
-import com.thripleq.nume.ui.playerbar.rememberPlayerState
+import com.thripleq.nume.ui.playerbar.rememberHasTrack
 import com.thripleq.nume.ui.profile.ProfileViewModel
 import com.thripleq.nume.ui.profile.TrackListUiState
 import com.thripleq.nume.ui.profile.TrackListViewModel
@@ -85,7 +86,8 @@ fun NumeApp() {
     val navController = rememberNavController()
     val context = LocalContext.current.applicationContext
     val player = remember { PlayerHolder.get(context) }
-    val playerState = rememberPlayerState(player)
+    // 只订阅"是否有曲目"（低频），不订阅 250ms 进度轮询，避免 NavHost 层随播放进度重组。
+    val hasTrack = rememberHasTrack(player)
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val destination = backStackEntry?.destination
@@ -116,7 +118,7 @@ fun NumeApp() {
         destination?.hasRoute<ChartDestination>() == true
     // 底部岛的目标高度：列表同步抬高，避免最后一项被播放条/操作浮岛遮挡。
     val islandBottomInset =
-        (if (playerState.hasTrack) 60.dp else 0.dp) +
+        (if (hasTrack) 60.dp else 0.dp) +
             (if (isListDetail && listActionsOffscreen) 57.dp else 0.dp)
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
@@ -141,6 +143,14 @@ fun NumeApp() {
                 LaunchedEffect(listCol) { listCollection = listCol }
                 LaunchedEffect(listCol) {
                     listPlayAll = { listCol?.let(listVm::onPlayAll) }
+                }
+                // 离开详情页时清空提升状态：避免下次进入（或进入另一歌单的首帧）误用旧数据。
+                DisposableEffect(Unit) {
+                    onDispose {
+                        listCollection = null
+                        listPlayAll = null
+                        listActionsOffscreen = false
+                    }
                 }
                 TrackListScreen(
                     source = "chart",
@@ -183,6 +193,14 @@ fun NumeApp() {
                 LaunchedEffect(listCol) {
                     listPlayAll = { listCol?.let(listVm::onPlayAll) }
                 }
+                // 离开详情页时清空提升状态：避免下次进入（或进入另一歌单的首帧）误用旧数据。
+                DisposableEffect(Unit) {
+                    onDispose {
+                        listCollection = null
+                        listPlayAll = null
+                        listActionsOffscreen = false
+                    }
+                }
                 TrackListScreen(
                     source = args.source,
                     id = args.id,
@@ -201,7 +219,7 @@ fun NumeApp() {
         // 播放页整个淡出。无曲目时只有导航行，不进详情页时整岛隐藏。
         AnimatedVisibility(
             visible = !isPlayerPage &&
-                (isTabPage || playerState.hasTrack || (isListDetail && listActionsOffscreen)),
+                (isTabPage || hasTrack || (isListDetail && listActionsOffscreen)),
             enter = fadeIn(tween(240)) + slideInVertically(tween(240), initialOffsetY = { it }),
             exit = fadeOut(tween(260)) + slideOutVertically(tween(260), targetOffsetY = { it / 4 }),
             modifier = Modifier
@@ -212,7 +230,6 @@ fun NumeApp() {
             PlayerCapsule(
                 navVisible = isTabPage,
                 selected = selectedTab,
-                playerState = playerState,
                 player = player,
                 onSelectTab = { tab ->
                     navController.navigate(tab.route) {

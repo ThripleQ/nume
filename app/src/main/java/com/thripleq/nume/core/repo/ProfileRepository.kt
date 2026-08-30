@@ -1,6 +1,7 @@
 package com.thripleq.nume.core.repo
 
 import android.util.Log
+import com.thripleq.nume.BuildConfig
 import com.thripleq.nume.core.net.NetEaseGateway
 import com.thripleq.nume.core.net.NeteaseOp
 import kotlinx.coroutines.Dispatchers
@@ -47,7 +48,7 @@ class ProfileRepository @Inject constructor(
     /** Current account, or null when not logged in (code 301) / on error. */
     suspend fun account(): Account? = withContext(Dispatchers.IO) {
         val r = gateway.call(NeteaseOp.USER_ACCOUNT)
-        if (r.err != 0 || r.code != 200.0) return@withContext null
+        if (r.err != 0 || r.code != 200) return@withContext null
         try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
             val account = root.optJSONObject("account") ?: return@withContext null
@@ -67,20 +68,15 @@ class ProfileRepository @Inject constructor(
 
     /** Liked tracks of [uid]: ids from /weapi/song/like/get → details. */
     suspend fun likedTracks(uid: Long): List<Track> = withContext(Dispatchers.IO) {
-        val r = gateway.call(NeteaseOp.LIKE_LIST, uid.toString())
-        Log.e("ProfileDiag", "likedTracks op=${NeteaseOp.LIKE_LIST} code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(300)}")
         val ids = rawIds(NeteaseOp.LIKE_LIST, uid.toString())
-        Log.e("ProfileDiag", "likedTracks rawIds result ids=${ids?.size}")
         if (ids.isNullOrEmpty()) return@withContext emptyList()
-        val tracks = songDetails(ids)
-        Log.e("ProfileDiag", "likedTracks songDetails count=${tracks.size}")
-        tracks
+        songDetails(ids)
     }
 
     /** Purchased single tracks (/api/single/mybought/song/list). */
     suspend fun purchasedSongs(): List<Track> = withContext(Dispatchers.IO) {
         val r = gateway.call(NeteaseOp.SONG_PURCHASED, "100", "0")
-        Log.e("ProfileDiag", "purchasedSongs op=${NeteaseOp.SONG_PURCHASED} code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(400)}")
+        diag("purchasedSongs op=${NeteaseOp.SONG_PURCHASED} code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(400)}")
         if (r.err != 0 || r.body.isEmpty()) return@withContext emptyList()
         try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
@@ -101,6 +97,7 @@ class ProfileRepository @Inject constructor(
                             artist = o.optString("artistName"),
                             artworkUrl = o.optString("picUrl").takeIf { it.isNotBlank() },
                             durationMs = 0L,
+                            albumName = o.optString("albumName"),
                         ),
                     )
                 }
@@ -114,7 +111,7 @@ class ProfileRepository @Inject constructor(
     /** Purchased digital albums (/api/digitalAlbum/purchased). */
     suspend fun purchasedAlbums(): List<Album> = withContext(Dispatchers.IO) {
         val r = gateway.call(NeteaseOp.ALBUM_PURCHASED, "100", "0")
-        Log.e("ProfileDiag", "purchasedAlbums op=${NeteaseOp.ALBUM_PURCHASED} code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(400)}")
+        diag("purchasedAlbums op=${NeteaseOp.ALBUM_PURCHASED} code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(400)}")
         if (r.err != 0 || r.body.isEmpty()) return@withContext emptyList()
         try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
@@ -150,7 +147,7 @@ class ProfileRepository @Inject constructor(
     suspend fun playlists(uid: Long): Pair<List<PlaylistSummary>, List<PlaylistSummary>> =
         withContext(Dispatchers.IO) {
             val r = gateway.call(NeteaseOp.USER_PLAYLIST, uid.toString(), "100", "0")
-            if (r.err != 0 || r.code != 200.0) return@withContext Pair(emptyList(), emptyList())
+            if (r.err != 0 || r.code != 200) return@withContext Pair(emptyList(), emptyList())
             try {
                 val root = JSONObject(String(r.body, Charsets.UTF_8))
                 val arr = root.optJSONArray("playlist") ?: return@withContext Pair(emptyList(), emptyList())
@@ -183,11 +180,11 @@ class ProfileRepository @Inject constructor(
     /** A playlist's full shell (metadata + tracks). Playlist id is a chart id. */
     suspend fun playlistCollection(playlistId: String): TrackCollection? = withContext(Dispatchers.IO) {
         val r = gateway.call(NeteaseOp.PLAYLIST_DETAIL, playlistId, "0")
-        if (r.err != 0 || r.code != 200.0) return@withContext null
+        if (r.err != 0 || r.code != 200) return@withContext null
         try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
             val playlist = root.optJSONObject("playlist") ?: return@withContext null
-            parsePlaylistObject(playlist, ::parseTracks)
+            parsePlaylistObject(playlist)
         } catch (_: Exception) {
             null
         }
@@ -196,13 +193,13 @@ class ProfileRepository @Inject constructor(
     /** A purchased album's shell (/weapi/v1/album/{id}). No play-count etc. */
     suspend fun albumCollection(albumId: String): TrackCollection? = withContext(Dispatchers.IO) {
         val r = gateway.call(NeteaseOp.ALBUM_DETAIL, albumId)
-        Log.e("ProfileDiag", "albumCollection op=${NeteaseOp.ALBUM_DETAIL} id=$albumId code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(300)}")
-        // 与 songDetails 同: 该接口 ApiResult.code 可能为 0.0, 不能以 code!=200 拒绝
+        diag("albumCollection op=${NeteaseOp.ALBUM_DETAIL} id=$albumId code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(300)}")
+        // 与 songDetails 同: 该接口 ApiResult.code 可能为 0(非 200), 不能以 code!=200 拒绝
         if (r.err != 0 || r.body.isEmpty()) return@withContext null
         try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
             // 顶层无 album 对象, songs 直接在根; 元数据从首曲推断
-            parseAlbumObject(root, ::parseTracks)
+            parseAlbumObject(root)
         } catch (_: Exception) {
             null
         }
@@ -212,8 +209,8 @@ class ProfileRepository @Inject constructor(
 
     private suspend fun rawIds(op: Int, arg: String): List<String>? {
         val r = gateway.call(op, arg)
-        if (r.err != 0 || r.code != 200.0) {
-            Log.e("ProfileDiag", "rawIds op=$op code=${r.code} err=${r.err} -> null")
+        if (r.err != 0 || r.code != 200) {
+            diag("rawIds op=$op code=${r.code} err=${r.err} -> null")
             return null
         }
         return try {
@@ -221,7 +218,7 @@ class ProfileRepository @Inject constructor(
             val root = JSONObject(body)
             val arr = root.optJSONArray("ids")
             // 用 Log.e 保证 vivo 上可见 (Log.d 被屏蔽)
-            Log.e("ProfileDiag", "rawIds op=$op bodyLen=${body.length} hasIds=${arr != null} idsLen=${arr?.length() ?: 0} body=${body.take(400)}")
+            diag("rawIds op=$op bodyLen=${body.length} hasIds=${arr != null} idsLen=${arr?.length() ?: 0} body=${body.take(400)}")
             arr ?: return null
             buildList { for (i in 0 until arr.length()) add(arr.optLong(i, 0L).toString()) }
         } catch (_: Exception) {
@@ -233,42 +230,23 @@ class ProfileRepository @Inject constructor(
         if (ids.isEmpty()) return emptyList()
         // /weapi/v3/song/detail accepts up to ~1000 ids in one call.
         val r = gateway.call(NeteaseOp.SONG_DETAIL, ids.joinToString(","))
-        Log.e("ProfileDiag", "songDetails op=${NeteaseOp.SONG_DETAIL} ids=${ids.size} code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(300)}")
-        // 注意: 该接口的 ApiResult.code 可能为 0.0(非 200), 但 body 正常 ——
+        diag("songDetails op=${NeteaseOp.SONG_DETAIL} ids=${ids.size} code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(300)}")
+        // 注意: 该接口的 ApiResult.code 可能为 0(非 200), 但 body 正常 ——
         // 不能以 code!=200 拒绝, 否则整个列表为空
         if (r.err != 0 || r.body.isEmpty()) return emptyList()
         return try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
             val tracks = parseTracks(root.optJSONArray("songs"))
-            Log.e("ProfileDiag", "songDetails parsed=${tracks.size} hasSongs=${root.has("songs")}")
+            diag("songDetails parsed=${tracks.size} hasSongs=${root.has("songs")}")
             tracks
         } catch (e: Exception) {
-            Log.e("ProfileDiag", "songDetails parse failed: ${e.message}")
+            diag("songDetails parse failed: ${e.message}")
             emptyList()
         }
     }
 
-    private fun parseTracks(arr: org.json.JSONArray?): List<Track> {
-        if (arr == null) return emptyList()
-        return buildList {
-            for (i in 0 until arr.length()) {
-                parseTrack(arr.optJSONObject(i))?.let { add(it) }
-            }
-        }
-    }
-
-    private fun parseTrack(o: JSONObject?): Track? {
-        if (o == null) return null
-        val id = o.optLong("id", 0L)
-        if (id <= 0) return null
-        return Track(
-            id = id.toString(),
-            name = o.optString("name"),
-            artist = o.optJSONArray("ar")?.optJSONObject(0)?.optString("name")
-                ?: o.optJSONArray("artists")?.optJSONObject(0)?.optString("name") ?: "",
-            artworkUrl = o.optJSONObject("al")?.optString("picUrl")
-                ?.takeIf { it.isNotBlank() },
-            durationMs = o.optLong("dt", 0L),
-        )
+    /** 调试诊断日志，仅在 debug 构建输出（vivo 等机型 Log.d 被屏蔽，故用 Log.e）。 */
+    private fun diag(msg: String) {
+        if (BuildConfig.DEBUG) Log.e("ProfileDiag", msg)
     }
 }
