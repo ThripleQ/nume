@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -63,17 +64,27 @@ import com.thripleq.nume.ui.profile.ProfileViewModel
 fun ProfileScreen(
     onOpenTracks: (source: String, id: String, title: String) -> Unit,
     onWebLogin: () -> Unit,
+    bottomInset: Dp = 0.dp,
 ) {
     val vm: ProfileViewModel = hiltViewModel()
     val state by vm.uiState.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+    // 避让必须放在滚动内容内部（同 TrackListScreen 的 contentPadding 做法）：
+    // 放在外层 padding 会在岛背后留一条永久空白带，卡片进不去、岛像贴在画布上。
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 16.dp, end = 16.dp, bottom = 16.dp + bottomInset),
+    ) {
         Spacer(Modifier.height(20.dp))
         when (val s = state) {
             ProfileUiState.Loading -> LoadingRow(busy)
             is ProfileUiState.Error -> ErrorRow { vm.refresh() }
-            ProfileUiState.LoggedOut -> LoggedOutHeader(busy, onWebLogin)
+            // 未登录也先把完整窗口摆好：登录卡置顶，四个区块以占位呈现，
+            // 结构与已登录完全一致，点击任意区块引导登录。
+            ProfileUiState.LoggedOut -> LoggedOutContent(onWebLogin)
             is ProfileUiState.LoggedIn -> LoggedInContent(
                 data = s.data,
                 onOpenTracks = onOpenTracks,
@@ -102,12 +113,43 @@ private fun ErrorRow(onRetry: () -> Unit) {
 }
 
 @Composable
-private fun LoggedOutHeader(busy: Boolean, onLogin: () -> Unit) {
+private fun LoggedOutContent(onLogin: () -> Unit) {
+    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+        Column(Modifier.fillMaxWidth()) {
+            LoginCard(onLogin)
+            Spacer(Modifier.height(16.dp))
+
+            PlaceholderSectionRow(
+                icon = Icons.Filled.Favorite,
+                title = "喜欢的音乐",
+                onLogin = onLogin,
+            )
+            PlaceholderSectionRow(
+                icon = Icons.Filled.ShoppingCart,
+                title = "已购",
+                onLogin = onLogin,
+            )
+
+            Spacer(Modifier.height(12.dp))
+            PlaceholderSectionHeader("收藏的歌单")
+            Spacer(Modifier.height(8.dp))
+            PlaceholderPlaylistGrid(onLogin)
+
+            Spacer(Modifier.height(16.dp))
+            PlaceholderSectionHeader("创建的歌单")
+            Spacer(Modifier.height(8.dp))
+            PlaceholderPlaylistGrid(onLogin)
+        }
+    }
+}
+
+@Composable
+private fun LoginCard(onLogin: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
-            .clickable(enabled = !busy) { onLogin() },
+            .clickable { onLogin() },
         shape = RoundedCornerShape(16.dp),
     ) {
         Row(
@@ -116,18 +158,26 @@ private fun LoggedOutHeader(busy: Boolean, onLogin: () -> Unit) {
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp, vertical = 24.dp),
         ) {
-            Icon(
-                imageVector = Icons.Filled.AccountCircle,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(56.dp),
-            )
+            Box(
+                Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.AccountCircle,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(56.dp),
+                )
+            }
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
                 Text("登录网易云", style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "使用官方网页登录，同步喜欢 / 已购 / 歌单",
+                    "使用官方网页登录,解锁喜欢 / 已购 / 歌单",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -142,6 +192,122 @@ private fun LoggedOutHeader(busy: Boolean, onLogin: () -> Unit) {
     }
 }
 
+@Composable
+private fun PlaceholderSectionRow(
+    icon: ImageVector,
+    title: String,
+    onLogin: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onLogin),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+        ) {
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            Spacer(Modifier.width(14.dp))
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                "登录后查看",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                "›",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlaceholderPlaylistGrid(onLogin: () -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        repeat(2) {
+            PlaceholderPlaylistCell(
+                onLogin = onLogin,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlaceholderPlaylistCell(
+    onLogin: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onLogin),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(160.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    Icons.Filled.List,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(32.dp),
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "未登录",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Box(
+            Modifier
+                .fillMaxWidth(0.8f)
+                .height(12.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        )
+        Spacer(Modifier.height(6.dp))
+        Box(
+            Modifier
+                .fillMaxWidth(0.45f)
+                .height(10.dp)
+                .clip(RoundedCornerShape(5.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        )
+    }
+}
+
 /* ── logged-in content ─────────────────────────────────── */
 
 @Composable
@@ -153,11 +319,7 @@ private fun LoggedInContent(
     // (Material You 在某些设备/壁纸下派生的 onBackground 偏深, 不指定 color
     // 的 Text 会显示成接近背景的颜色, 在深色主题下看不清)
     CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState()),
-        ) {
+        Column(Modifier.fillMaxWidth()) {
             UserCard(data.account)
             Spacer(Modifier.height(16.dp))
 
@@ -326,6 +488,16 @@ private fun SectionHeader(title: String, count: Int) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+/** 未登录占位用的标题：不显示计数，与已登录区块保持同一段式。 */
+@Composable
+private fun PlaceholderSectionHeader(title: String) {
+    Text(
+        title,
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.onSurface,
+    )
 }
 
 @Composable

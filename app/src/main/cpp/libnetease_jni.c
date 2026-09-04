@@ -208,8 +208,6 @@ static ne_resp *dispatch(int op, int narg, const char *const a[]) {
         case 27: return ne_login_email(A(0), A(1));
         case 28: return ne_login_cellphone(A(0), A(1));
         case 29: return ne_login_refresh();
-        case 30: return ne_send_captcha(A(0), A(1));
-        case 31: return ne_login_cellphone_captcha(A(0), A(1), A(2));
         default: return NULL;
     }
 #undef A

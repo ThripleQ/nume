@@ -50,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -247,9 +248,15 @@ fun PlayerCapsule(
         modifier = modifier
             .width(islandWidth)
             .height(height)
+            // 悬浮投影：让岛从背景里"顶"起来，深浅背景上都醒目。
+            .shadow(elevation = 16.dp, shape = shape, clip = false)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape),
+            // 半透明玻璃感：容器色带轻微透明度，透出背后内容层次。
+            .background(
+                MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f),
+            )
+            // 亮描边：勾出胶囊轮廓，与页面背景分离。
+            .border(1.5.dp, MaterialTheme.colorScheme.outline, shape),
     ) {
         if (showBar) {
             PlayerBar(
@@ -469,7 +476,7 @@ private fun NavRow(
                     tint = if (isSelected) {
                         MaterialTheme.colorScheme.onPrimary
                     } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                        MaterialTheme.colorScheme.onSurface
                     },
                     modifier = Modifier.size(24.dp),
                 )

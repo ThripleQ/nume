@@ -120,6 +120,8 @@ fun NumeApp() {
     val islandBottomInset =
         (if (hasTrack) 60.dp else 0.dp) +
             (if (isListDetail && listActionsOffscreen) 57.dp else 0.dp)
+    // tab 页固定可见导航段（57dp）+ 浮层边距（14dp）；有曲目时叠播放条（60dp）。
+    val tabBottomInset = 57.dp + 14.dp + (if (hasTrack) 60.dp else 0.dp)
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         NavHost(
@@ -169,6 +171,7 @@ fun NumeApp() {
                         navController.navigate(TrackListDestination(source, id, title))
                     },
                     onWebLogin = { navController.navigate(WebLogin) },
+                    bottomInset = tabBottomInset,
                 )
             }
             composable<WebLogin> {
