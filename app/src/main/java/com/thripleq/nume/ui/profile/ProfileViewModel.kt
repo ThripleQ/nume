@@ -4,27 +4,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.thripleq.nume.core.net.NetEaseGateway
 import com.thripleq.nume.core.repo.Account
-import com.thripleq.nume.core.repo.Album
-import com.thripleq.nume.core.repo.PlaylistSummary
+import com.thripleq.nume.core.repo.ProfileData
 import com.thripleq.nume.core.repo.ProfileRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
-
-/** Everything the Profile tab shows once logged in. */
-data class ProfileData(
-    val account: Account,
-    val likedCount: Int,
-    val purchasedSongCount: Int,
-    val purchasedAlbums: List<Album>,
-    val subscribedPlaylists: List<PlaylistSummary>,
-    val createdPlaylists: List<PlaylistSummary>,
-)
 
 sealed interface ProfileUiState {
     data object Loading : ProfileUiState
@@ -46,6 +33,10 @@ class ProfileViewModel @Inject constructor(
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
 
     init {
+        // tab 切换会销毁重建 ViewModel（saveState/restoreState），若 repo 里有上次数据
+        // 直接展示，不闪加载动画；随后后台静默刷新。
+        val cached = repository.cachedProfile
+        if (cached != null) _uiState.value = ProfileUiState.LoggedIn(cached)
         refresh()
     }
 
@@ -53,34 +44,24 @@ class ProfileViewModel @Inject constructor(
     fun refresh() {
         viewModelScope.launch {
             _busy.value = true
-            _uiState.value = ProfileUiState.Loading
+            // 已有缓存/已登录数据时不置 Loading，避免切 tab 回来闪一下动画。
+            if (_uiState.value !is ProfileUiState.LoggedIn) {
+                _uiState.value = ProfileUiState.Loading
+            }
             val account = repository.account()
             _busy.value = false
             if (account == null) {
                 _uiState.value = ProfileUiState.LoggedOut
                 return@launch
             }
-            loadProfile(account)
+            val data = repository.loadProfile(account)
+            _busy.value = false
+            if (data != null) {
+                _uiState.value = ProfileUiState.LoggedIn(data)
+            } else if (_uiState.value !is ProfileUiState.LoggedIn) {
+                _uiState.value = ProfileUiState.Error("加载失败")
+            }
         }
-    }
-
-    private suspend fun loadProfile(account: Account) = coroutineScope {
-        _busy.value = true
-        val liked = async { repository.likedTracks(account.uid) }
-        val purchasedSongs = async { repository.purchasedSongs() }
-        val purchasedAlbums = async { repository.purchasedAlbums() }
-        val playlists = async { repository.playlists(account.uid) }
-        val (subscribedPlaylists, createdPlaylists) = playlists.await()
-        val data = ProfileData(
-            account = account,
-            likedCount = liked.await().size,
-            purchasedSongCount = purchasedSongs.await().size,
-            purchasedAlbums = purchasedAlbums.await(),
-            subscribedPlaylists = subscribedPlaylists,
-            createdPlaylists = createdPlaylists,
-        )
-        _busy.value = false
-        _uiState.value = ProfileUiState.LoggedIn(data)
     }
 
     /** Completes login from an in-app WebView session (official login page). */
@@ -95,7 +76,9 @@ class ProfileViewModel @Inject constructor(
                 _uiState.value = ProfileUiState.LoggedOut
             } else {
                 onDone(true, "")
-                loadProfile(account)
+                // 登录态变化，强制刷新并更新缓存。
+                val data = repository.loadProfile(account)
+                if (data != null) _uiState.value = ProfileUiState.LoggedIn(data)
             }
         }
     }

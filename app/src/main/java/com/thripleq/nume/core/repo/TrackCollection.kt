@@ -2,6 +2,19 @@ package com.thripleq.nume.core.repo
 
 import org.json.JSONObject
 
+/** 线程安全 LRU 缓存：按最近使用排序，容量溢出淘汰最久未用。 */
+class LruCache<K, V>(private val max: Int) {
+    private val map = object : LinkedHashMap<K, V>(max, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, V>?): Boolean = size > max
+    }
+
+    operator fun get(key: K): V? = synchronized(map) { map[key] }
+    operator fun set(key: K, value: V) {
+        synchronized(map) { map[key] = value }
+    }
+    fun clear() = synchronized(map) { map.clear() }
+}
+
 /**
  * 一个"壳子 + 列表"：榜单、歌单、专辑都是同一个结构——一段集合元数据
  * （封面/标题/播放量/收藏数/更新频率/描述/创建者）+ 曲目列表。喜欢/已购

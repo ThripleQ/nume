@@ -5,6 +5,8 @@ import com.thripleq.nume.BuildConfig
 import com.thripleq.nume.core.net.NetEaseGateway
 import com.thripleq.nume.core.net.NeteaseOp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import javax.inject.Inject
@@ -35,6 +37,16 @@ data class PlaylistSummary(
     val subscribed: Boolean,
 )
 
+/** Everything the Profile tab shows once logged in. */
+data class ProfileData(
+    val account: Account,
+    val likedCount: Int,
+    val purchasedSongCount: Int,
+    val purchasedAlbums: List<Album>,
+    val subscribedPlaylists: List<PlaylistSummary>,
+    val createdPlaylists: List<PlaylistSummary>,
+)
+
 /**
  * Account-scoped content source (Profile tab): login state, liked tracks,
  * purchases and the user's playlists. Every call goes through the single
@@ -45,9 +57,26 @@ class ProfileRepository @Inject constructor(
     private val gateway: NetEaseGateway,
 ) {
 
+    /**
+     * 最近一次成功拉取的完整"我的"数据。ViewModel 重建（tab 切换 saveState/restoreState
+     * 会销毁重建 entry 的 ViewModel）时先读这里，避免每次进"我的"都闪加载动画；
+     * 展示后由后台静默刷新保持新鲜。登录/登出时失效。
+     */
+    @Volatile
+    var cachedProfile: ProfileData? = null
+        private set
+
+    /** 已解析"喜欢"曲目缓存（uid → tracks）：Profile 页计数与列表页共用，避免重复全量拉取。 */
+    private val likedCache = LruCache<String, List<Track>>(2)
+
+    /** 歌单/专辑壳缓存：重进列表页不重拉 JSON。 */
+    private val collectionCache = LruCache<String, TrackCollection>(32)
+
     /** Current account, or null when not logged in (code 301) / on error. */
     suspend fun account(): Account? = withContext(Dispatchers.IO) {
         val r = gateway.call(NeteaseOp.USER_ACCOUNT)
+        // 明确未登录（301）时清缓存，让 UI 回落到未登录；网络错误保留旧缓存。
+        if (r.code == 301) cachedProfile = null
         if (r.err != 0 || r.code != 200) return@withContext null
         try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
@@ -66,11 +95,31 @@ class ProfileRepository @Inject constructor(
         }
     }
 
-    /** Liked tracks of [uid]: ids from /weapi/song/like/get → details. */
+    /** 拉取完整 Profile 数据并写入 [cachedProfile]；失败返回 null 且保留旧缓存。 */
+    suspend fun loadProfile(account: Account): ProfileData? = coroutineScope {
+        val liked = async { likedTracks(account.uid) }
+        val purchasedSongs = async { purchasedSongs() }
+        val purchasedAlbums = async { purchasedAlbums() }
+        val playlists = async { playlists(account.uid) }
+        val (subscribedPlaylists, createdPlaylists) = playlists.await()
+        val data = ProfileData(
+            account = account,
+            likedCount = liked.await().size,
+            purchasedSongCount = purchasedSongs.await().size,
+            purchasedAlbums = purchasedAlbums.await(),
+            subscribedPlaylists = subscribedPlaylists,
+            createdPlaylists = createdPlaylists,
+        )
+        cachedProfile = data
+        data
+    }
+
+    /** Liked tracks of [uid]: ids from /weapi/song/like/get → details. 结果内存缓存。 */
     suspend fun likedTracks(uid: Long): List<Track> = withContext(Dispatchers.IO) {
+        likedCache[uid.toString()]?.let { return@withContext it }
         val ids = rawIds(NeteaseOp.LIKE_LIST, uid.toString())
         if (ids.isNullOrEmpty()) return@withContext emptyList()
-        songDetails(ids)
+        songDetails(ids).also { likedCache[uid.toString()] = it }
     }
 
     /** Purchased single tracks (/api/single/mybought/song/list). */
@@ -177,21 +226,25 @@ class ProfileRepository @Inject constructor(
             }
         }
 
-    /** A playlist's full shell (metadata + tracks). Playlist id is a chart id. */
+    /** A playlist's full shell (metadata + tracks). Playlist id is a chart id. 结果内存缓存。 */
     suspend fun playlistCollection(playlistId: String): TrackCollection? = withContext(Dispatchers.IO) {
+        val key = "pl:$playlistId"
+        collectionCache[key]?.let { return@withContext it }
         val r = gateway.call(NeteaseOp.PLAYLIST_DETAIL, playlistId, "0")
         if (r.err != 0 || r.code != 200) return@withContext null
         try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
             val playlist = root.optJSONObject("playlist") ?: return@withContext null
-            parsePlaylistObject(playlist)
+            parsePlaylistObject(playlist).also { collectionCache[key] = it }
         } catch (_: Exception) {
             null
         }
     }
 
-    /** A purchased album's shell (/weapi/v1/album/{id}). No play-count etc. */
+    /** A purchased album's shell (/weapi/v1/album/{id}). No play-count etc. 结果内存缓存。 */
     suspend fun albumCollection(albumId: String): TrackCollection? = withContext(Dispatchers.IO) {
+        val key = "al:$albumId"
+        collectionCache[key]?.let { return@withContext it }
         val r = gateway.call(NeteaseOp.ALBUM_DETAIL, albumId)
         diag("albumCollection op=${NeteaseOp.ALBUM_DETAIL} id=$albumId code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(300)}")
         // 与 songDetails 同: 该接口 ApiResult.code 可能为 0(非 200), 不能以 code!=200 拒绝
@@ -199,7 +252,7 @@ class ProfileRepository @Inject constructor(
         try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
             // 顶层无 album 对象, songs 直接在根; 元数据从首曲推断
-            parseAlbumObject(root)
+            parseAlbumObject(root).also { collectionCache[key] = it }
         } catch (_: Exception) {
             null
         }

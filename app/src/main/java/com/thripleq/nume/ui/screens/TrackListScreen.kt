@@ -1,10 +1,8 @@
 package com.thripleq.nume.ui.screens
 
-import android.net.Uri
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -54,12 +52,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
-import coil.imageLoader
 import coil.request.ImageRequest
 import com.thripleq.nume.core.repo.Track
 import com.thripleq.nume.core.repo.TrackCollection
@@ -68,12 +64,6 @@ import com.thripleq.nume.ui.profile.TrackListSource
 import com.thripleq.nume.ui.profile.TrackListUiState
 import com.thripleq.nume.ui.profile.TrackListViewModel
 import java.util.Locale
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.joinAll
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 
 /**
  * 统一"壳子 + 列表"详情页：榜单 / 歌单 / 专辑 / 喜欢 / 已购都是同一个结构——
@@ -87,20 +77,12 @@ fun TrackListScreen(
     onBack: () -> Unit,
     onOpenPlayer: () -> Unit,
     onActionsOffscreen: (Boolean) -> Unit = {},
-    bottomInset: Dp = 0.dp,
+    showTopBar: Boolean = true,
+    compactHeader: Boolean = false,
 ) {
     val vm: TrackListViewModel = hiltViewModel()
     val state by vm.uiState.collectAsStateWithLifecycle()
     val src = remember(source) { TrackListSource.from(source) }
-    val context = LocalContext.current
-
-    // 数据到了直接显示列表，封面预载放后台（不阻塞、不反复拉回加载动画）。
-    val collection = (state as? TrackListUiState.Ready)?.collection
-    LaunchedEffect(collection) {
-        if (collection != null) {
-            launch { preloadCovers(context, collection.tracks) }
-        }
-    }
 
     // 头部三按钮的滚动位置：滚到接近视口顶（即将看不见）时上报，触发底部操作浮岛。
     val listState = rememberLazyListState()
@@ -112,53 +94,56 @@ fun TrackListScreen(
     LaunchedEffect(source, id) { vm.load(src, id, title) }
     LaunchedEffect(Unit) { vm.openPlayer.collect { onOpenPlayer() } }
 
-    Column(Modifier.fillMaxSize()) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(start = 8.dp, top = 8.dp),
-        ) {
-            Text(
-                text = "‹",
-                style = MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.clickable { onBack() }.padding(end = 12.dp),
-            )
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+    // 数据到了直接显示列表（不预载封面：滚动到哪张就单张串行下载）。
+    val collection = (state as? TrackListUiState.Ready)?.collection
 
+    // 胶囊撑开：scale 0.92→1 + 圆角 28→0，内容像一颗胶囊被拉开成整屏。
+    Column(Modifier.fillMaxSize()) {
+        if (showTopBar) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(start = 8.dp, top = 8.dp),
+            ) {
+                Text(
+                    text = "‹",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.clickable { onBack() }.padding(end = 12.dp),
+                )
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
         if (collection != null) {
-            // 底部浮岛（播放条/操作浮岛）抬高列表：与岛高度动画同速，浮岛变高列表同步留白，
-            // 滚到底部时最后一项不会被遮挡。
-            val animatedBottomInset by animateDpAsState(
-                targetValue = bottomInset,
-                animationSpec = tween(320),
-                label = "bottomInset",
-            )
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
-                    start = 16.dp,
-                    top = 16.dp,
-                    end = 16.dp,
-                    bottom = 16.dp + animatedBottomInset,
+                    start = if (compactHeader) 8.dp else 16.dp,
+                    top = if (compactHeader) 0.dp else 8.dp,
+                    end = if (compactHeader) 8.dp else 16.dp,
+                    bottom = 16.dp,
                 ),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                item {
+                item(key = "header") {
                     TrackListHeader(
                         collection,
                         vm,
                         onActionsTop = { actionsTop = it },
+                        compact = compactHeader,
                     )
                 }
-                itemsIndexed(collection.tracks, key = { _, t -> t.id }) { index, track ->
+                itemsIndexed(
+                    collection.tracks,
+                    key = { _, t -> t.id },
+                    contentType = { _, _ -> "track" },
+                ) { index, track ->
                     TrackRow(index, track) { vm.onTrackClick(collection, index) }
                 }
             }
@@ -212,29 +197,6 @@ private fun LoadingHint(text: String) {
     }
 }
 
-/** 封面预载并发上限：全量预载但限流，避免一次性轰炸网络。 */
-private const val PRELOAD_CONCURRENCY = 8
-
-/** 预载整单封面到 Coil 缓存（96px 小图，内存命中后滚动零 IO）。
- *  并发拉取但限流；等全部结束（含失败）再进列表。 */
-private suspend fun preloadCovers(context: Context, tracks: List<Track>) {
-    val loader = context.imageLoader
-    val semaphore = Semaphore(PRELOAD_CONCURRENCY)
-    coroutineScope {
-        tracks.mapNotNull { t ->
-            t.artworkUrl?.let { url ->
-                ImageRequest.Builder(context).data(Uri.parse(url)).size(96).build()
-            }
-        }.map { req ->
-            launch(Dispatchers.IO) {
-                semaphore.withPermit {
-                    runCatching { loader.execute(req) }
-                }
-            }
-        }.joinAll()
-    }
-}
-
 /* ── 头部：壳的元数据 + 操作按钮 ─────────────────────── */
 
 @Composable
@@ -242,7 +204,12 @@ private fun TrackListHeader(
     collection: TrackCollection,
     vm: TrackListViewModel,
     onActionsTop: (Float) -> Unit,
+    compact: Boolean = false,
 ) {
+    if (compact) {
+        TrackListHeaderCompact(collection, vm, onActionsTop)
+        return
+    }
     val context = LocalContext.current.applicationContext
 
     Column(
@@ -340,6 +307,81 @@ private fun TrackListHeader(
     }
 }
 
+/**
+ * 紧凑头部：用于展开壳内的列表（胶囊拉成面板）。
+ * 封面居中，下方一行元信息（播放量/收藏数等），再下方横排操作按钮。
+ * 不再显示集合名称（壳顶标题栏已示"喜欢的音乐"，避免重复）。
+ */
+@Composable
+private fun TrackListHeaderCompact(
+    collection: TrackCollection,
+    vm: TrackListViewModel,
+    onActionsTop: (Float) -> Unit,
+) {
+    val context = LocalContext.current.applicationContext
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(120.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        ) {
+            val context = LocalContext.current
+            val cover = remember(collection.coverUrl) {
+                collection.coverUrl?.let {
+                    ImageRequest.Builder(context).data(it).size(240).build()
+                }
+            }
+            if (cover != null) {
+                AsyncImage(
+                    model = cover,
+                    contentDescription = collection.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Filled.List,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(44.dp),
+                    )
+                }
+            }
+        }
+        val line = collectionMetaLine(collection)
+        if (line.isNotBlank()) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = line,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        // 按钮行：等宽横排、整行居中，onGloballyPositioned 上报三按钮顶部 y，供滚动浮岛判定。
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .onGloballyPositioned { onActionsTop(it.positionInWindow().y) },
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            CollectionActions(
+                onPlayAll = { vm.onPlayAll(collection) },
+                onPlaceholderAction = {
+                    Toast.makeText(context, "开发中", Toast.LENGTH_SHORT).show()
+                },
+            )
+        }
+    }
+}
+
 /** 数据行：按有值的字段拼接，如 "250.4亿次播放 · 3752.2万人收藏"。 */
 private fun collectionMetaLine(c: TrackCollection): String {
     val parts = mutableListOf<String>()
@@ -382,13 +424,6 @@ private fun TrackRow(index: Int, track: Track, onClick: () -> Unit) {
             .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = "${index + 1}",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.width(26.dp),
-        )
         Box(
             modifier = Modifier
                 .size(48.dp)

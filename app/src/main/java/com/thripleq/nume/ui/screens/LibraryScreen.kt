@@ -37,7 +37,9 @@ import com.thripleq.nume.ui.library.LibraryViewModel
 
 /** 免登录首页：列出排行榜，点进榜单到统一列表页。 */
 @Composable
-fun LibraryScreen(onOpenChart: (String, String) -> Unit) {
+fun LibraryScreen(
+    onOpenChart: (String, String) -> Unit,
+) {
     val vm: LibraryViewModel = hiltViewModel()
     val state by vm.uiState.collectAsStateWithLifecycle()
 
@@ -61,7 +63,12 @@ fun LibraryScreen(onOpenChart: (String, String) -> Unit) {
 private fun ChartList(charts: List<Chart>, onChart: (Chart) -> Unit) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 128.dp),
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            top = 16.dp,
+            end = 16.dp,
+            bottom = 16.dp,
+        ),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item { Text("排行榜", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface) }

@@ -1,16 +1,9 @@
 package com.thripleq.nume
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -22,7 +15,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hasRoute
@@ -42,7 +34,7 @@ import com.thripleq.nume.ui.profile.TrackListUiState
 import com.thripleq.nume.ui.profile.TrackListViewModel
 import com.thripleq.nume.ui.screens.HomeScreen
 import com.thripleq.nume.ui.screens.LibraryScreen
-import com.thripleq.nume.ui.screens.PlayerScreen
+import com.thripleq.nume.ui.screens.PlayerSheet
 import com.thripleq.nume.ui.screens.ProfileScreen
 import com.thripleq.nume.ui.screens.SearchScreen
 import com.thripleq.nume.ui.screens.TrackListScreen
@@ -62,9 +54,6 @@ object Search
 @Serializable
 object Profile
 
-@Serializable
-object Player
-
 /** [TrackListScreen] for a chart: chart id IS a playlist id. */
 @Serializable
 data class ChartDestination(val chartId: String, val name: String)
@@ -80,7 +69,13 @@ data class TrackListDestination(val source: String, val id: String, val title: S
 @Serializable
 object WebLogin
 
-/** Root of the Compose UI: navigation graph + floating island. */
+/**
+ * Root of the Compose UI: navigation graph + docked island + player sheet.
+ *
+ * 落地常驻胶囊岛：全宽贴底、顶部圆角、去白描边、surfaceContainerHighest。
+ * 岛内 = 顶部拉手 + 播放状态栏（可收起）+ 底部导航行；拉手上拉 → 全屏播放页。
+ * 播放页用 [PlayerSheet]（ExpandableShell 从岛向上拉开成沉浸全屏），覆盖岛本身。
+ */
 @Composable
 fun NumeApp() {
     val navController = rememberNavController()
@@ -95,7 +90,6 @@ fun NumeApp() {
     val isTabPage = destination?.hasRoute<Home>() == true ||
         destination?.hasRoute<Search>() == true ||
         destination?.hasRoute<Profile>() == true
-    val isPlayerPage = destination?.hasRoute<Player>() == true
     val currentTab = when {
         destination?.hasRoute<Home>() == true -> BottomTab.ExploreTab
         destination?.hasRoute<Search>() == true -> BottomTab.SearchTab
@@ -109,19 +103,23 @@ fun NumeApp() {
     }
     val selectedTab = currentTab ?: lastTab
 
-    // 列表详情页（榜单/歌单/专辑/喜欢/已购）的滚动浮岛：
-    // TrackListScreen 上报三按钮是否滑出视口 + 当前壳数据，供底部岛切换为操作行。
+    // 列表详情页（榜单/歌单/专辑/喜欢/已购）的滚动操作行：
+    // TrackListScreen 上报三按钮是否滑出视口，供岛内切换为操作行。
     var listActionsOffscreen by remember { mutableStateOf(false) }
     var listCollection by remember { mutableStateOf<TrackCollection?>(null) }
     var listPlayAll by remember { mutableStateOf<(() -> Unit)?>(null) }
     val isListDetail = destination?.hasRoute<TrackListDestination>() == true ||
         destination?.hasRoute<ChartDestination>() == true
-    // 底部岛的目标高度：列表同步抬高，避免最后一项被播放条/操作浮岛遮挡。
-    val islandBottomInset =
-        (if (hasTrack) 60.dp else 0.dp) +
-            (if (isListDetail && listActionsOffscreen) 57.dp else 0.dp)
-    // tab 页固定可见导航段（57dp）+ 浮层边距（14dp）；有曲目时叠播放条（60dp）。
-    val tabBottomInset = 57.dp + 14.dp + (if (hasTrack) 60.dp else 0.dp)
+
+    // 播放页（全屏覆盖层）开关：由岛上拉 / 播放条点击触发。
+    var playerSheetOpen by remember { mutableStateOf(false) }
+    // 播放页跟手展开进度（null=内部动画收尾；Float=手势实时驱动）。
+    var playerSheetProgress by remember { mutableStateOf<Float?>(null) }
+    // 岛内播放状态栏是否展开：拉手上拉分段拉出，默认隐藏（无曲目也有播放条空壳）。
+    var playerBarVisible by remember { mutableStateOf(false) }
+
+    // 岛实时高度（dp）：PlayerCapsule 上报，供展开壳底部让位、动态适配岛高变化。
+    var islandHeightDp by remember { mutableStateOf(0f) }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         NavHost(
@@ -146,7 +144,6 @@ fun NumeApp() {
                 LaunchedEffect(listCol) {
                     listPlayAll = { listCol?.let(listVm::onPlayAll) }
                 }
-                // 离开详情页时清空提升状态：避免下次进入（或进入另一歌单的首帧）误用旧数据。
                 DisposableEffect(Unit) {
                     onDispose {
                         listCollection = null
@@ -159,9 +156,8 @@ fun NumeApp() {
                     id = args.chartId,
                     title = args.name,
                     onBack = { navController.popBackStack() },
-                    onOpenPlayer = { navController.navigate(Player) },
+                    onOpenPlayer = { playerSheetOpen = true },
                     onActionsOffscreen = { listActionsOffscreen = it },
-                    bottomInset = islandBottomInset,
                 )
             }
             composable<Search> { SearchScreen() }
@@ -171,7 +167,8 @@ fun NumeApp() {
                         navController.navigate(TrackListDestination(source, id, title))
                     },
                     onWebLogin = { navController.navigate(WebLogin) },
-                    bottomInset = tabBottomInset,
+                    onOpenPlayer = { playerSheetOpen = true },
+                    islandHeight = islandHeightDp,
                 )
             }
             composable<WebLogin> {
@@ -196,7 +193,6 @@ fun NumeApp() {
                 LaunchedEffect(listCol) {
                     listPlayAll = { listCol?.let(listVm::onPlayAll) }
                 }
-                // 离开详情页时清空提升状态：避免下次进入（或进入另一歌单的首帧）误用旧数据。
                 DisposableEffect(Unit) {
                     onDispose {
                         listCollection = null
@@ -209,46 +205,62 @@ fun NumeApp() {
                     id = args.id,
                     title = args.title,
                     onBack = { navController.popBackStack() },
-                    onOpenPlayer = { navController.navigate(Player) },
+                    onOpenPlayer = { playerSheetOpen = true },
                     onActionsOffscreen = { listActionsOffscreen = it },
-                    bottomInset = islandBottomInset,
                 )
             }
-            composable<Player> { PlayerScreen() }
         }
 
-        // 合成岛屿：导航 tab 平时可见；详情页收起导航、播放条下滑占位；
-        // 列表详情页滚过头部三按钮时，播放条上移、操作浮岛从下滑入；
-        // 播放页整个淡出。无曲目时只有导航行，不进详情页时整岛隐藏。
-        AnimatedVisibility(
-            visible = !isPlayerPage &&
-                (isTabPage || hasTrack || (isListDetail && listActionsOffscreen)),
-            enter = fadeIn(tween(240)) + slideInVertically(tween(240), initialOffsetY = { it }),
-            exit = fadeOut(tween(260)) + slideOutVertically(tween(260), targetOffsetY = { it / 4 }),
+        // 落地常驻岛：永远组合在底部（播放页是全屏不透明覆盖层，打开时盖住岛、
+        // 收起时无缝露出它——不用 AnimatedVisibility 进出场动画，否则收起播放页时
+        // 岛自带的滑入动画会和播放页的缩回动画打架，观感错乱）。
+        PlayerCapsule(
+            selected = selectedTab,
+            player = player,
+            playerBarVisible = playerBarVisible,
+            onTogglePlayerBar = { playerBarVisible = !playerBarVisible },
+            onSelectTab = { tab ->
+                navController.navigate(tab.route) {
+                    popUpTo(navController.graph.findStartDestination().id) {
+                        saveState = true
+                    }
+                    launchSingleTop = true
+                    restoreState = true
+                }
+            },
+            onPullUp = {
+                // 上拉开播放页：定格全屏。进度交给内部动画收尾（从当前进度续跑到 1）。
+                playerBarVisible = true
+                playerSheetOpen = true
+                playerSheetProgress = null
+            },
+            onSheetProgress = { p ->
+                // 跟手：进度>0 显示播放页壳并驱动其几何；
+                // =0 是回弹 settle：保留壳，progress=0 驱动壳滑下，PlayerSheet 完成后卸载。
+                playerSheetOpen = true
+                playerSheetProgress = p
+            },
+            actionVisible = isListDetail && listActionsOffscreen,
+            onPlayAll = { listPlayAll?.invoke() },
+            onPlaceholderAction = {
+                android.widget.Toast.makeText(context, "开发中", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onIslandHeightChange = { islandHeightDp = it },
+            sheetOpen = playerSheetOpen,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(14.dp),
-        ) {
-            PlayerCapsule(
-                navVisible = isTabPage,
-                selected = selectedTab,
-                player = player,
-                onSelectTab = { tab ->
-                    navController.navigate(tab.route) {
-                        popUpTo(navController.graph.findStartDestination().id) {
-                            saveState = true
-                        }
-                        launchSingleTop = true
-                        restoreState = true
-                    }
+                .fillMaxWidth(),
+        )
+
+        // 全屏播放页：从底部跟手升起成沉浸全屏（覆盖岛）。盖在最上层。
+        // 跟手时 progress 驱动壳位移（1:1 跟手）；定格后走内部动画续跑到全屏。
+        if (playerSheetOpen) {
+            PlayerSheet(
+                onDismiss = {
+                    playerSheetOpen = false
+                    playerSheetProgress = null
                 },
-                onOpenPlayer = { navController.navigate(Player) },
-                actionVisible = isListDetail && listActionsOffscreen,
-                onPlayAll = { listPlayAll?.invoke() },
-                onPlaceholderAction = {
-                    android.widget.Toast.makeText(context, "开发中", android.widget.Toast.LENGTH_SHORT).show()
-                },
+                progress = playerSheetProgress,
             )
         }
     }
