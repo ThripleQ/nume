@@ -1,14 +1,9 @@
 package com.thripleq.nume.ui.playerbar
 
 import android.net.Uri
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,12 +13,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.statusBars
-
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -44,23 +34,20 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -69,12 +56,12 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.thripleq.nume.Home
 import com.thripleq.nume.Profile
 import com.thripleq.nume.Search
 import com.thripleq.nume.core.playback.PlayerHolder
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 /** The top-level tabs shown in the docked capsule. */
 enum class BottomTab(val route: Any, val label: String, val icon: ImageVector) {
@@ -193,321 +180,133 @@ fun rememberPlayerPosition(
 }
 
 /**
- * 轻量订阅"播放器当前是否持有曲目"（用于岛显隐），独立于高频进度轮询：
- * 调用方（NumeApp）只订阅这里，不会随 250ms 进度刷新而重组。
- */
-@Composable
-fun rememberHasTrack(player: Player): Boolean {
-    var hasTrack by remember { mutableStateOf(player.currentMediaItem != null) }
-    LaunchedEffect(player) {
-        val listener = object : Player.Listener {
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                hasTrack = player.currentMediaItem != null
-            }
-        }
-        player.addListener(listener)
-        hasTrack = player.currentMediaItem != null
-        try {
-            while (true) {
-                // 兜底：占位 MediaItem 的 transition 在部分流程不触发，定期核对。
-                if (hasTrack != (player.currentMediaItem != null)) {
-                    hasTrack = player.currentMediaItem != null
-                }
-                delay(500)
-            }
-        } finally {
-            player.removeListener(listener)
-        }
-    }
-    return hasTrack
-}
-
-/**
- * 落地常驻胶囊岛：全宽贴底、仅顶部圆角、surfaceContainerHighest 胶囊色。
+ * 常驻底部 dock：拉手 + 迷你播放条 + (列表操作行) + 分隔线 + 底部导航行。
  *
- * 结构（自顶向下）：拉手 → 播放状态栏 [PlayerBar] → 列表操作行 [actionVisible] →
- * 底部导航行（常驻）。
- *
- * ## 分段上拉（问题 2 修正）
- * 拉手垂直拖动是**分段**的，且全程跟手：
- * - 第一段（0 → [barHeight]）：拉出 / 收回播放状态栏。播放条**默认隐藏**、
- *   **无曲目也存在**（只是内容为空壳，点击仍可进播放页）。
- * - 第一段拉满后再继续上拉 → 拉出全屏播放页（[onPullUp]）。
- * - 下拉同理：播放页未开时先收播放条。
- *
- * 拖动中岛高由 [Animatable] `snapTo` 实时跟随手指（问题 3 修正）；松手后弹簧回弹到
- * 最近锚点。`playerBarVisible`（NumeApp 持有）是**松手后的定格态**，只在拖动结束
- * 时更新，避免拖到一半底部 inset 跳变。
+ * 与全屏播放页**零耦合**：点迷你播放条只是触发 [onOpenPlayer]（外部置位打开开关），
+ * 播放页作为独立最上层覆盖层由自己动画滑入滑出，本 dock 不做任何让位/联动动画。
  */
 @Composable
 fun PlayerCapsule(
-    selected: BottomTab,
     player: Player,
-    playerBarVisible: Boolean,
-    onTogglePlayerBar: () -> Unit,
+    selected: BottomTab,
     onSelectTab: (BottomTab) -> Unit,
-    onPullUp: () -> Unit,
+    /** 列表详情页操作行是否顶替迷你条上方的空间。 */
     actionVisible: Boolean = false,
     onPlayAll: () -> Unit = {},
     onPlaceholderAction: () -> Unit = {},
+    /** 点击迷你播放条 → 打开全屏播放页（唯一入口）。 */
+    onOpenPlayer: () -> Unit = {},
+    /** dock 总高（dp）实时上报，供上层内容避让/Profile 展开壳让位。 */
     onIslandHeightChange: (Float) -> Unit = {},
-    /** 播放页是否打开（定格全屏/跟手中）。收起时播放条淡回。 */
-    sheetOpen: Boolean = false,
-    /** 播放页跟手拉出进度（0..1）实时上报；松手后外部定格，不再上报。 */
-    onSheetProgress: (Float) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val playerState = rememberPlayerState(player)
-    // 进度是高频状态：单独订阅，只有进度条随 250ms 轮询重组，岛其余部分不动。
-    val positionMs by rememberPlayerPosition(player)
+    // 进度是高频状态：单独订阅，只有进度条随 250ms 轮询重组。
+    val positionState = rememberPlayerPosition(player)
     val density = LocalDensity.current
-    // 落地形状：顶部圆角、底部贴地直角。
     val shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
-    val handleHeight = 16.dp
+    val handleHeight = 14.dp
     val barHeight = 60.dp
-    val actionSectionHeight = 57.dp
-    val navSectionHeight = 57.dp
+    val actionHeight = 57.dp
 
-    val basePx = with(density) { (handleHeight + navSectionHeight).toPx() }
-    val actionPx = with(density) { actionSectionHeight.toPx() }
-    val barPx = with(density) { barHeight.toPx() }
-    // 手势导航条 inset：底部贴地后把它加进高度，补偿内部 Column 的 navigationBarsPadding，
-    // 避免内容被压缩（尤其是展开播放条后）。
-    val navInsetPx = with(density) {
-        WindowInsets.navigationBars.getBottom(density).toFloat()
+    // 总高上报：实际测量高度（含底部手势条 inset）。
+    var dockHeightPx by remember { mutableIntStateOf(0) }
+    LaunchedEffect(dockHeightPx) {
+        if (dockHeightPx > 0) onIslandHeightChange(with(density) { dockHeightPx.toDp() }.value)
     }
 
-    // 岛高度动画（px）：Animatable 支持跟手 snapTo；锚点 = base + action + bar(0/满)。
-    val currentHeight = remember {
-        Animatable(
-            basePx + navInsetPx + (if (playerBarVisible) barPx else 0f),
-        )
-    }
-    val scope = rememberCoroutineScope()
-    var dragging by remember { mutableStateOf(false) }
-
-    // 播放条上移淡出进度（0..1）：跟手拉出播放页时 1:1 驱动；
-    // 播放页定格/收起后由 NumeApp 触发回弹或淡回动画。
-    val pullProgressAnim = remember { Animatable(0f) }
-    val pullProgress by pullProgressAnim.asState()
-
-    // 播放页收起（sheetOpen→false）时播放条淡回原位。
-    LaunchedEffect(sheetOpen) {
-        if (!sheetOpen) {
-            pullProgressAnim.animateTo(0f, tween(220, easing = FastOutSlowInEasing))
-        }
-    }
-
-    // 锚点变化（playerBarVisible / actionVisible 由外部定格态驱动）时动画到位。
-    LaunchedEffect(playerBarVisible, actionVisible) {
-        if (!dragging) {
-            val target = basePx + navInsetPx + (if (actionVisible) actionPx else 0f) +
-                (if (playerBarVisible) barPx else 0f)
-            currentHeight.animateTo(target, tween(320, easing = FastOutSlowInEasing))
-        }
-    }
-
-    // 岛高实时上报（px→Dp）：让展开壳的底部让位跟随岛的实时高度
-    // （拉播放条 / 操作行出现 / 缓冲拉伸时岛变高，壳底同步停在新岛上沿）。
-    LaunchedEffect(Unit) {
-        snapshotFlow { currentHeight.value }.collect { heightPx ->
-            onIslandHeightChange(with(density) { heightPx.toDp() }.value)
-        }
-    }
-
-    // 播放条当前露出高度（px），随拖动实时变化；clamp 到 [0, barPx]。
-    // base 含手势条 inset（navInsetPx），只算到「导航行下沿」为止。
-    val baseWithInset = basePx + navInsetPx
-    val barShownPx = (currentHeight.value - baseWithInset - (if (actionVisible) actionPx else 0f))
-        .coerceIn(0f, barPx)
-
-    Box(
+    Column(
         modifier = modifier
-            .fillMaxWidth()
-            .height(with(density) { currentHeight.value.toDp() })
-            .shadow(elevation = 8.dp, shape = shape, clip = false),
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            .onSizeChanged { dockHeightPx = it.height },
     ) {
-        // 背景层：圆角裁剪背景，独立于内容层——不裁剪浮出的播放条。
+        // 拉手：顶部居中短横条。
         Box(
-            Modifier
-                .fillMaxSize()
-                .clip(shape)
-                .background(MaterialTheme.colorScheme.surfaceContainerHighest),
-        )
-        Column(Modifier.fillMaxSize().navigationBarsPadding()) {
-            // 拉手：顶部居中的短横条；垂直拖动分段展开/收起播放条。
-            // 播放页不再由拉手拉出（改由播放条上拉触发，见 PlayerBar）。
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(handleHeight),
+            contentAlignment = Alignment.Center,
+        ) {
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(handleHeight)
-                    .pointerInput(Unit) {
-                        detectVerticalDragGestures(
-                            onDragStart = { dragging = true },
-                            onDragEnd = {
-                                dragging = false
-                                val base = baseWithInset + (if (actionVisible) actionPx else 0f)
-                                // 定格：松开时高度过半 → 播放条留下。
-                                val settled = currentHeight.value >= base + barPx / 2
-                                if (settled != playerBarVisible) onTogglePlayerBar()
-                                scope.launch {
-                                    currentHeight.animateTo(
-                                        base + (if (settled) barPx else 0f),
-                                        tween(260, easing = FastOutSlowInEasing),
-                                    )
-                                }
-                            },
-                            onVerticalDrag = { _, dragAmount ->
-                                val base = baseWithInset + (if (actionVisible) actionPx else 0f)
-                                val max = base + barPx
-                                val raw = currentHeight.value - dragAmount
-                                // 播放条已拉满后继续上拉不再处理（播放页由播放条手势接管）。
-                                if (raw <= max) {
-                                    val next = raw.coerceIn(base, max)
-                                    scope.launch { currentHeight.snapTo(next) }
-                                }
-                            },
-                        )
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    Modifier
-                        .size(width = 36.dp, height = 4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                        ),
-                )
-            }
+                Modifier
+                    .size(width = 36.dp, height = 4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)),
+            )
+        }
 
-            // 播放条占位：布局保持「拉手 → 播放条 → 操作行 → 导航行」顺序；
-            // 实际播放条绘制在顶层（见下），可越界浮出不被裁剪。
-            Spacer(Modifier.fillMaxWidth().height(with(density) { barShownPx.toDp() }))
+        // 迷你播放条：点击进播放页；左右滑切歌。
+        PlayerBar(
+            state = playerState,
+            positionState = positionState,
+            player = player,
+            onClick = onOpenPlayer,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(barHeight),
+        )
 
-            // 列表详情页的操作行：滚过头按钮时在导航行上方出现。
-            if (actionVisible) {
-                Column(Modifier.fillMaxWidth().height(actionSectionHeight)) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .background(MaterialTheme.colorScheme.outlineVariant),
-                    )
-                    ActionNavRow(
-                        onPlayAll = onPlayAll,
-                        onPlaceholderAction = onPlaceholderAction,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
-                    )
-                }
-            }
-
-            // 底部导航行：常驻。缓冲拉伸时上面的空白由 weight(1f) 吸收，
-            // 导航行钉在底部、上段（拉手/播放条）被顶起，避免内容被压。
-            Column(Modifier.fillMaxWidth().height(navSectionHeight)) {
+        // 列表详情页操作行（滚动把头部按钮顶出视口时显示）。
+        if (actionVisible) {
+            Column(Modifier.fillMaxWidth().height(actionHeight)) {
                 Box(
                     Modifier
                         .fillMaxWidth()
                         .height(1.dp)
                         .background(MaterialTheme.colorScheme.outlineVariant),
                 )
-                NavRow(
-                    selected = selected,
-                    onSelect = onSelectTab,
+                ActionNavRow(
+                    onPlayAll = onPlayAll,
+                    onPlaceholderAction = onPlaceholderAction,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
                 )
             }
-            Spacer(Modifier.weight(1f))
         }
 
-        // 播放状态栏（顶层，越界浮出不被岛 clip 裁剪）：
-        // 高度随分段跟手变化；上拉播放页时 1:1 跟手上移淡出。
-        // 按住播放条上拉 → 拉出播放页（跟手）。
-        PlayerBar(
-            state = playerState,
-            positionMs = positionMs,
-            player = player,
-            onClick = onPullUp,
-            pullProgress = pullProgress,
-            onPullProgress = { p ->
-                // 跟手 1:1：播放条上移淡出与播放页壳长高共用同一进度。
-                scope.launch { pullProgressAnim.snapTo(p) }
-                onSheetProgress(p)
-            },
-            onPullCommit = { p ->
-                // 松手 settle：过半定格全屏，否则回弹（壳缩回 + 播放条淡回）。
-                if (p >= 0.5f) {
-                    onPullUp()
-                } else {
-                    onSheetProgress(0f)
-                    scope.launch {
-                        pullProgressAnim.animateTo(0f, tween(260, easing = FastOutSlowInEasing))
-                    }
-                }
-            },
-            modifier = Modifier
-                .offset(y = handleHeight)
+        // 分隔线 = 播放条与导航之间的分隔线。
+        Box(
+            Modifier
                 .fillMaxWidth()
-                .height(with(density) { barShownPx.toDp() }),
+                .height(1.dp)
+                .background(MaterialTheme.colorScheme.outlineVariant),
         )
+
+        // 底部导航行：内垫手势条 inset，背景自然延伸到屏幕底。
+        Box(Modifier.fillMaxWidth().navigationBarsPadding()) {
+            NavRow(
+                selected = selected,
+                onSelect = onSelectTab,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(57.dp),
+            )
+        }
     }
 }
 
 /** Mini player bar: cover + metadata + swipe-to-skip + play/pause + thin progress.
  *
- *  上移淡出：拉出播放页时（[pullProgress] 0→1）播放条向上平移并淡出，
- *  播放页壳从底部 1:1 跟手升起盖过它。竖向拖动 1:1 映射为拉出进度。
+ * 常驻在 dock 顶部（拉手之下）。点击整条 → [onClick]（开全屏播放页）；左右滑切歌。
  */
 @Composable
 private fun PlayerBar(
     state: PlayerUiState,
-    positionMs: Long,
+    positionState: State<Long>,
     player: Player,
     onClick: () -> Unit,
-    pullProgress: Float,
-    onPullProgress: (Float) -> Unit,
-    onPullCommit: (Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
+    val context = LocalContext.current
     val swipeThresholdPx = with(density) { SWIPE_THRESHOLD_DP.dp.toPx() }
-    // 播放页壳从底部升到全屏（状态栏下沿）所需位移；与 PlayerSheet 用同一算法，
-    // 保证跟手 1:1（进度 = 手指位移 / 此距离）。
-    val configuration = LocalConfiguration.current
-    val sheetFullHeightPx = with(density) {
-        val statusTop = WindowInsets.statusBars.getTop(density).toFloat()
-        val windowBottom = configuration.screenHeightDp.dp.toPx()
-        (windowBottom - statusTop).coerceAtLeast(1f)
-    }
 
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .graphicsLayer {
-                // 播放条跟手上移淡出：上移量 = 手指累计位移（1:1 跟手），
-                // 淡出与播放页进度同步 —— 播放页追上盖过它时已淡出。
-                translationY = -pullProgress * sheetFullHeightPx
-                alpha = 1f - pullProgress
-            }
             .clickable(onClick = onClick)
-            .pointerInput(player) {
-                // 上拉拉出播放页：累计上移距离 → 进度（1:1）。
-                var pullAccum = 0f
-                detectVerticalDragGestures(
-                    onDragStart = { pullAccum = 0f },
-                    onDragEnd = {
-                        onPullCommit((pullAccum / sheetFullHeightPx).coerceIn(0f, 1f))
-                    },
-                    onVerticalDrag = { _, dragAmount ->
-                        pullAccum += -dragAmount
-                        onPullProgress((pullAccum / sheetFullHeightPx).coerceIn(0f, 1f))
-                    },
-                )
-            }
             .pointerInput(player) {
                 var accumulated = 0f
                 detectHorizontalDragGestures(
@@ -536,8 +335,14 @@ private fun PlayerBar(
                     .background(MaterialTheme.colorScheme.surface),
             ) {
                 state.coverUrl?.let { uri ->
+                    val model = remember(uri) {
+                        ImageRequest.Builder(context)
+                            .data(Uri.parse(uri))
+                            .size(120)
+                            .build()
+                    }
                     AsyncImage(
-                        model = Uri.parse(uri),
+                        model = model,
                         contentDescription = state.title,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
@@ -574,20 +379,34 @@ private fun PlayerBar(
             }
         }
 
-        val fraction =
-            if (state.durationMs > 0) (positionMs.toFloat() / state.durationMs).coerceIn(0f, 1f) else 0f
+        // 进度条：唯一读 positionState 的组合，250ms 轮询只让它重组。
+        MiniProgressBar(
+            state = state,
+            positionState = positionState,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/** 迷你进度条：从 [positionState] 读值，独立重组，不带动播放条/岛。 */
+@Composable
+private fun MiniProgressBar(
+    state: PlayerUiState,
+    positionState: State<Long>,
+    modifier: Modifier = Modifier,
+) {
+    val positionMs = positionState.value
+    val fraction =
+        if (state.durationMs > 0) (positionMs.toFloat() / state.durationMs).coerceIn(0f, 1f) else 0f
+    Box(
+        modifier = modifier.height(3.dp),
+    ) {
         Box(
             Modifier
-                .fillMaxWidth()
-                .height(3.dp),
-        ) {
-            Box(
-                Modifier
-                    .fillMaxWidth(fraction)
-                    .fillMaxHeight()
-                    .background(MaterialTheme.colorScheme.primary),
-            )
-        }
+                .fillMaxWidth(fraction)
+                .fillMaxHeight()
+                .background(MaterialTheme.colorScheme.primary),
+        )
     }
 }
 
@@ -621,7 +440,8 @@ private fun NavRow(
     selected: BottomTab,
     onSelect: (BottomTab) -> Unit,
     modifier: Modifier = Modifier,
-) {    val pill = RoundedCornerShape(10.dp)
+) {
+    val pill = RoundedCornerShape(10.dp)
     Row(
         modifier = modifier.padding(6.dp),
         verticalAlignment = Alignment.CenterVertically,

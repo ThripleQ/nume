@@ -1,6 +1,5 @@
 package com.thripleq.nume.ui.screens
 
-import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -547,8 +546,12 @@ private fun UserCard(account: Account) {
     ) {
         Box(Modifier.size(64.dp).clip(CircleShape)) {
             if (account.avatarUrl != null) {
+                val context = LocalContext.current
+                val model = remember(account.avatarUrl) {
+                    ImageRequest.Builder(context).data(account.avatarUrl).size(128).build()
+                }
                 AsyncImage(
-                    model = Uri.parse(account.avatarUrl),
+                    model = model,
                     contentDescription = account.nickname,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),

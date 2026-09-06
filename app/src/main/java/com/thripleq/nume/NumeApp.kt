@@ -28,7 +28,6 @@ import com.thripleq.nume.core.playback.PlayerHolder
 import com.thripleq.nume.core.repo.TrackCollection
 import com.thripleq.nume.ui.playerbar.BottomTab
 import com.thripleq.nume.ui.playerbar.PlayerCapsule
-import com.thripleq.nume.ui.playerbar.rememberHasTrack
 import com.thripleq.nume.ui.profile.ProfileViewModel
 import com.thripleq.nume.ui.profile.TrackListUiState
 import com.thripleq.nume.ui.profile.TrackListViewModel
@@ -81,22 +80,17 @@ fun NumeApp() {
     val navController = rememberNavController()
     val context = LocalContext.current.applicationContext
     val player = remember { PlayerHolder.get(context) }
-    // 只订阅"是否有曲目"（低频），不订阅 250ms 进度轮询，避免 NavHost 层随播放进度重组。
-    val hasTrack = rememberHasTrack(player)
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val destination = backStackEntry?.destination
 
-    val isTabPage = destination?.hasRoute<Home>() == true ||
-        destination?.hasRoute<Search>() == true ||
-        destination?.hasRoute<Profile>() == true
     val currentTab = when {
         destination?.hasRoute<Home>() == true -> BottomTab.ExploreTab
         destination?.hasRoute<Search>() == true -> BottomTab.SearchTab
         destination?.hasRoute<Profile>() == true -> BottomTab.ProfileTab
         else -> null
     }
-    // 详情页时保持进入前的 tab，收起/展开动画中高亮 pill 不闪到探索。
+    // 详情页时保持进入前的 tab，避免导航高亮闪到探索。
     var lastTab by remember { mutableStateOf(BottomTab.ExploreTab) }
     LaunchedEffect(currentTab) {
         if (currentTab != null) lastTab = currentTab
@@ -104,22 +98,22 @@ fun NumeApp() {
     val selectedTab = currentTab ?: lastTab
 
     // 列表详情页（榜单/歌单/专辑/喜欢/已购）的滚动操作行：
-    // TrackListScreen 上报三按钮是否滑出视口，供岛内切换为操作行。
+    // TrackListScreen 上报三按钮是否滑出视口，供 dock 内切换为操作行。
     var listActionsOffscreen by remember { mutableStateOf(false) }
     var listCollection by remember { mutableStateOf<TrackCollection?>(null) }
     var listPlayAll by remember { mutableStateOf<(() -> Unit)?>(null) }
     val isListDetail = destination?.hasRoute<TrackListDestination>() == true ||
         destination?.hasRoute<ChartDestination>() == true
 
-    // 播放页（全屏覆盖层）开关：由岛上拉 / 播放条点击触发。
-    var playerSheetOpen by remember { mutableStateOf(false) }
-    // 播放页跟手展开进度（null=内部动画收尾；Float=手势实时驱动）。
-    var playerSheetProgress by remember { mutableStateOf<Float?>(null) }
-    // 岛内播放状态栏是否展开：拉手上拉分段拉出，默认隐藏（无曲目也有播放条空壳）。
-    var playerBarVisible by remember { mutableStateOf(false) }
-
-    // 岛实时高度（dp）：PlayerCapsule 上报，供展开壳底部让位、动态适配岛高变化。
+    // dock 总高（dp）：PlayerCapsule 上报，供 Profile 展开壳底部让位。
     var islandHeightDp by remember { mutableStateOf(0f) }
+
+    // 播放页显式开关：点播放条/列表项 → 置位打开；PlayerSheet 播完收起动画回调复位。
+    // 与 dock 完全解耦：不共享锚点、不联动几何，播放页是独立最上层覆盖层。
+    var playerSheetOpen by remember { mutableStateOf(false) }
+    fun openPlayer() {
+        playerSheetOpen = true
+    }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         NavHost(
@@ -156,7 +150,7 @@ fun NumeApp() {
                     id = args.chartId,
                     title = args.name,
                     onBack = { navController.popBackStack() },
-                    onOpenPlayer = { playerSheetOpen = true },
+                    onOpenPlayer = ::openPlayer,
                     onActionsOffscreen = { listActionsOffscreen = it },
                 )
             }
@@ -167,7 +161,7 @@ fun NumeApp() {
                         navController.navigate(TrackListDestination(source, id, title))
                     },
                     onWebLogin = { navController.navigate(WebLogin) },
-                    onOpenPlayer = { playerSheetOpen = true },
+                    onOpenPlayer = ::openPlayer,
                     islandHeight = islandHeightDp,
                 )
             }
@@ -205,20 +199,16 @@ fun NumeApp() {
                     id = args.id,
                     title = args.title,
                     onBack = { navController.popBackStack() },
-                    onOpenPlayer = { playerSheetOpen = true },
+                    onOpenPlayer = ::openPlayer,
                     onActionsOffscreen = { listActionsOffscreen = it },
                 )
             }
         }
 
-        // 落地常驻岛：永远组合在底部（播放页是全屏不透明覆盖层，打开时盖住岛、
-        // 收起时无缝露出它——不用 AnimatedVisibility 进出场动画，否则收起播放页时
-        // 岛自带的滑入动画会和播放页的缩回动画打架，观感错乱）。
+        // 常驻底部 dock：播放条 + 列表操作行 + 导航。静态，不参与播放页动画。
         PlayerCapsule(
-            selected = selectedTab,
             player = player,
-            playerBarVisible = playerBarVisible,
-            onTogglePlayerBar = { playerBarVisible = !playerBarVisible },
+            selected = selectedTab,
             onSelectTab = { tab ->
                 navController.navigate(tab.route) {
                     popUpTo(navController.graph.findStartDestination().id) {
@@ -228,39 +218,22 @@ fun NumeApp() {
                     restoreState = true
                 }
             },
-            onPullUp = {
-                // 上拉开播放页：定格全屏。进度交给内部动画收尾（从当前进度续跑到 1）。
-                playerBarVisible = true
-                playerSheetOpen = true
-                playerSheetProgress = null
-            },
-            onSheetProgress = { p ->
-                // 跟手：进度>0 显示播放页壳并驱动其几何；
-                // =0 是回弹 settle：保留壳，progress=0 驱动壳滑下，PlayerSheet 完成后卸载。
-                playerSheetOpen = true
-                playerSheetProgress = p
-            },
             actionVisible = isListDetail && listActionsOffscreen,
             onPlayAll = { listPlayAll?.invoke() },
             onPlaceholderAction = {
                 android.widget.Toast.makeText(context, "开发中", android.widget.Toast.LENGTH_SHORT).show()
             },
+            onOpenPlayer = ::openPlayer,
             onIslandHeightChange = { islandHeightDp = it },
-            sheetOpen = playerSheetOpen,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth(),
         )
 
-        // 全屏播放页：从底部跟手升起成沉浸全屏（覆盖岛）。盖在最上层。
-        // 跟手时 progress 驱动壳位移（1:1 跟手）；定格后走内部动画续跑到全屏。
+        // 全屏播放页覆盖层：最上层、盖住 dock；组合由显式开关驱动，内部自管动画。
         if (playerSheetOpen) {
             PlayerSheet(
-                onDismiss = {
-                    playerSheetOpen = false
-                    playerSheetProgress = null
-                },
-                progress = playerSheetProgress,
+                onDismiss = { playerSheetOpen = false },
             )
         }
     }
