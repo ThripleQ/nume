@@ -76,24 +76,27 @@ static ne_http_resp *jni_transport_request(
     if (!env) return transport_error_resp("jni attach failed");
 
     /* Kotlin NumeTransport.httpRequest(method, url, body, contentType,
-       cookieHeader, userAgent); the C transport is (url, method, ...), so
-       reorder the first two here to match the Kotlin order. */
-    const char *vals[6] = { method, url, body, content_type,
-                            cookie_header, user_agent };
-    jstring js[6];
+       cookieHeader, userAgent, realIp); the C transport is (url, method, ...),
+       so reorder the first two here to match the Kotlin order. realIp is the
+       X-Real-IP value from ne_http_get_real_ip() — NULL when no IP injection
+       is configured, letting OkHttp skip the header entirely. */
+    const char *real_ip = ne_http_get_real_ip();
+    const char *vals[7] = { method, url, body, content_type,
+                            cookie_header, user_agent, real_ip };
+    jstring js[7];
     int ok = 1;
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 7; i++) {
         js[i] = vals[i] ? (*env)->NewStringUTF(env, vals[i]) : NULL;
         if (vals[i] && !js[i]) { ok = 0; }
     }
     if (!ok) {
-        for (int i = 0; i < 6; i++) if (js[i]) (*env)->DeleteLocalRef(env, js[i]);
+        for (int i = 0; i < 7; i++) if (js[i]) (*env)->DeleteLocalRef(env, js[i]);
         return transport_error_resp("string creation failed");
     }
 
     jobject out = (*env)->CallStaticObjectMethod(env, g_transport_cls,
-                     g_transport_http, js[0], js[1], js[2], js[3], js[4], js[5]);
-    for (int i = 0; i < 6; i++) (*env)->DeleteLocalRef(env, js[i]);
+                     g_transport_http, js[0], js[1], js[2], js[3], js[4], js[5], js[6]);
+    for (int i = 0; i < 7; i++) (*env)->DeleteLocalRef(env, js[i]);
     if (!out) {
         /* A pending JVM exception explains a null transport result; surface it
            instead of discarding it (previous builds only said "returned null"). */
@@ -294,7 +297,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
         (*e)->FindClass(e, NE_NS "NumeTransport"));
     g_transport_http = (*e)->GetStaticMethodID(e, g_transport_cls, "httpRequest",
         "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;"
-        "Ljava/lang/String;Ljava/lang/String;)L" NE_NS "NumeTransportOut;");
+        "Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)L" NE_NS "NumeTransportOut;");
     g_out_cls = (*e)->NewGlobalRef(e,
         (*e)->FindClass(e, NE_NS "NumeTransportOut"));
     g_out_status = (*e)->GetFieldID(e, g_out_cls, "status", "I");
@@ -307,6 +310,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     g_apiresult_ctor = (*e)->GetMethodID(e, g_apiresult_cls, "<init>", "(II[B)V");
 
     ne_http_set_transport(&g_jni_transport);
+    ne_http_set_random_cn_ip(1);
     return JNI_VERSION_1_6;
 }
 

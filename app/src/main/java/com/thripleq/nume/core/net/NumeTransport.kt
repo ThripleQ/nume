@@ -26,8 +26,9 @@ object NumeTransport {
         contentType: String?,
         cookieHeader: String?,
         userAgent: String?,
+        realIp: String?,
     ): NumeTransportOut {
-        return RawHttp.send(method, url, body, contentType, cookieHeader, userAgent)
+        return RawHttp.send(method, url, body, contentType, cookieHeader, userAgent, realIp)
     }
 
     private object RawHttp {
@@ -46,6 +47,7 @@ object NumeTransport {
             contentType: String?,
             cookieHeader: String?,
             userAgent: String?,
+            realIp: String?,
         ): NumeTransportOut {
             val requestBody: RequestBody? =
                 if (method == "POST" && body != null) {
@@ -62,6 +64,10 @@ object NumeTransport {
             if (!userAgent.isNullOrEmpty()) builder.header("User-Agent", userAgent)
             // libnetease's curl transport sets this unconditionally; mirror it.
             builder.header("Referer", "https://music.163.com")
+            if (!realIp.isNullOrEmpty()) {
+                builder.header("X-Real-IP", realIp)
+                builder.header("X-Forwarded-For", realIp)
+            }
 
             return try {
                 Log.d("NumeTransport", "-> ${method} ${url}")
