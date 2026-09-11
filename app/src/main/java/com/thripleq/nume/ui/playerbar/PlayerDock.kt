@@ -3,9 +3,10 @@ package com.thripleq.nume.ui.playerbar
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -29,7 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Chat
-import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Pause
@@ -58,9 +59,11 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
@@ -68,6 +71,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -92,7 +96,7 @@ import kotlin.math.abs
 
 /** The top-level tabs shown in the docked capsule. */
 enum class BottomTab(val route: Any, val label: String, val icon: ImageVector) {
-    ExploreTab(route = Home, label = "探索", icon = Icons.Filled.Home),
+    ExploreTab(route = Home, label = "探索", icon = Icons.Filled.Explore),
     SearchTab(route = Search, label = "搜索", icon = Icons.Filled.Search),
     ProfileTab(route = Profile, label = "我的", icon = Icons.Filled.Person),
 }
@@ -210,11 +214,17 @@ fun rememberPlayerPosition(
 private const val OPEN_THRESHOLD = 0.25f
 
 /** 松手时向上甩的速度（px/s）超过它则视为想打开。 */
-private const val FLING_UP_PPS = 900f
+private const val FLING_UP_PPS = 500f
 
-/** 收起/弹出动画时长。 */
-private const val OPEN_ANIM_MS = 300
-private const val CLOSE_ANIM_MS = 300
+/** spring 动画参数：打开时略带弹性，收起时干净无回弹。 */
+private val SPRING_OPEN = spring<Float>(
+    dampingRatio = Spring.DampingRatioLowBouncy,
+    stiffness = Spring.StiffnessMedium,
+)
+private val SPRING_CLOSE = spring<Float>(
+    dampingRatio = Spring.DampingRatioNoBouncy,
+    stiffness = Spring.StiffnessMedium,
+)
 
 /**
  * 播放页状态：dock 与全屏播放页**共用同一份**进度，但只供全屏面在
@@ -241,7 +251,7 @@ class PlayerDockState internal constructor(private val scope: CoroutineScope) {
                 open = true
                 progress.snapTo(0f)
             }
-            progress.animateTo(1f, tween(OPEN_ANIM_MS, easing = FastOutSlowInEasing))
+            progress.animateTo(1f, SPRING_OPEN)
         }
     }
 
@@ -262,20 +272,25 @@ class PlayerDockState internal constructor(private val scope: CoroutineScope) {
         scope.launch { progress.snapTo(lift.coerceIn(0f, 1f)) }
     }
 
-    /** 松手吸附：到阈值/甩速则弹满，否则回落收起（尾帧落地后才卸载）。 */
-    fun settle(velUpPxPerSec: Float) {
+    /** 松手吸附：到阈值/甩速则弹满，否则回落收起（尾帧落地后才卸载）。
+     * 传入 [fullHeightPx] 将甩速换算为 progress/s 供 spring 续跑，手感更自然。 */
+    fun settle(velUpPxPerSec: Float, fullHeightPx: Float = 1f) {
         animJob?.cancel()
         animJob = scope.launch {
+            val velProgress = (velUpPxPerSec / fullHeightPx).coerceIn(-10f, 10f)
             if (progress.value >= OPEN_THRESHOLD || velUpPxPerSec >= FLING_UP_PPS) {
-                progress.animateTo(1f, tween(OPEN_ANIM_MS, easing = FastOutSlowInEasing))
+                progress.animateTo(1f, SPRING_OPEN, initialVelocity = velProgress)
             } else {
-                runClose()
+                progress.animateTo(0f, SPRING_CLOSE, initialVelocity = velProgress)
+                withFrameNanos {}
+                withFrameNanos {}
+                open = false
             }
         }
     }
 
     private suspend fun runClose() {
-        progress.animateTo(0f, tween(CLOSE_ANIM_MS, easing = FastOutSlowInEasing))
+        progress.animateTo(0f, SPRING_CLOSE)
         // animateTo 返回后再等两帧，确保尾帧真正落地才卸载，避免收起闪最后一帧。
         withFrameNanos {}
         withFrameNanos {}
@@ -315,8 +330,7 @@ fun PlayerDock(
     val positionState = rememberPlayerPosition(player)
     val density = LocalDensity.current
     val shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
-    val handleHeight = 14.dp
-    val barHeight = 60.dp
+    val barHeight = 68.dp
     val actionHeight = 57.dp
 
     // 全屏播放面需盖满整个窗口（含状态栏），供几何与手势换算共用同一分母。
@@ -336,26 +350,12 @@ fun PlayerDock(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
+                .shadow(2.dp, shape, clip = false)
                 .clip(shape)
-                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                .background(MaterialTheme.colorScheme.surfaceContainer)
                 .graphicsLayer { alpha = (1f - state.progress.value).coerceIn(0f, 1f) }
                 .onSizeChanged { dockHeightPx = it.height },
         ) {
-            // 拉手：顶部居中短横条。
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(handleHeight),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    Modifier
-                        .size(width = 36.dp, height = 4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)),
-                )
-            }
-
             // 迷你播放条：点击进播放页；上滑 1:1 拉出播放页；左右滑切歌。
             PlayerBar(
                 state = state,
@@ -369,7 +369,7 @@ fun PlayerDock(
             )
 
             // 列表详情页操作行（滚动把头部按钮顶出视口时显示）。
-            if (actionVisible) {
+            AnimatedVisibility(visible = actionVisible) {
                 Column(Modifier.fillMaxWidth().height(actionHeight)) {
                     Box(
                         Modifier
@@ -402,7 +402,7 @@ fun PlayerDock(
                     onSelect = onSelectTab,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(57.dp),
+                        .height(64.dp),
                 )
             }
         }
@@ -438,6 +438,7 @@ private fun PlayerBar(
 ) {
     val density = LocalDensity.current
     val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
     val swipeThresholdPx = with(density) { SWIPE_THRESHOLD_DP.dp.toPx() }
 
     Column(
@@ -450,8 +451,14 @@ private fun PlayerBar(
                     onDragStart = { accumulated = 0f },
                     onDragEnd = {
                         when {
-                            accumulated <= -swipeThresholdPx -> PlayerHolder.skipNext(player)
-                            accumulated >= swipeThresholdPx -> PlayerHolder.skipPrevious(player)
+                            accumulated <= -swipeThresholdPx -> {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                PlayerHolder.skipNext(player)
+                            }
+                            accumulated >= swipeThresholdPx -> {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                PlayerHolder.skipPrevious(player)
+                            }
                         }
                     },
                     onHorizontalDrag = { _, dragAmount -> accumulated += dragAmount },
@@ -481,7 +488,7 @@ private fun PlayerBar(
                             if (axis == 0) {
                                 state.open()
                             } else if (axis == 1) {
-                                state.settle(-tracker.calculateVelocity().y)
+                                state.settle(-tracker.calculateVelocity().y, fullHeightPx)
                             }
                             break
                         }
@@ -520,7 +527,7 @@ private fun PlayerBar(
         ) {
             Box(
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(44.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(MaterialTheme.colorScheme.surface),
             ) {
@@ -542,9 +549,10 @@ private fun PlayerBar(
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    text = playerState.title.ifEmpty { "未设置歌曲" },
+                    text = playerState.title.ifEmpty { "暂无播放" },
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = if (playerState.hasTrack) MaterialTheme.colorScheme.onSurface
+                           else MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -558,8 +566,10 @@ private fun PlayerBar(
                 )
             }
             Spacer(Modifier.width(12.dp))
-            SpectrumPlaceholder()
-            Spacer(Modifier.width(8.dp))
+            if (playerState.hasTrack) {
+                SpectrumPlaceholder()
+                Spacer(Modifier.width(8.dp))
+            }
             IconButton(onClick = { PlayerHolder.togglePlay(player) }) {
                 Icon(
                     imageVector = if (playerState.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
@@ -570,11 +580,13 @@ private fun PlayerBar(
         }
 
         // 进度条：唯一读 positionState 的组合，250ms 轮询只让它重组。
-        MiniProgressBar(
-            state = playerState,
-            positionState = positionState,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        if (playerState.hasTrack) {
+            MiniProgressBar(
+                state = playerState,
+                positionState = positionState,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 
@@ -624,16 +636,19 @@ private fun SpectrumPlaceholder() {
     }
 }
 
-/** The tab row: evenly split tabs, selected one on a theme-color pill. */
+/** The tab row: evenly split tabs, selected one on a theme-color pill.
+ * M3 Expressive 导航栏：选中 = secondaryContainer pill + onSecondaryContainer 图标,
+ * 未选 = onSurfaceVariant 灰图标, 图标+标签竖排。 */
 @Composable
 private fun NavRow(
     selected: BottomTab,
     onSelect: (BottomTab) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val pill = RoundedCornerShape(10.dp)
+    val pill = RoundedCornerShape(50)
+    val haptics = LocalHapticFeedback.current
     Row(
-        modifier = modifier.padding(6.dp),
+        modifier = modifier.padding(horizontal = 4.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         BottomTab.entries.forEach { tab ->
@@ -643,36 +658,55 @@ private fun NavRow(
                     .weight(1f)
                     .fillMaxHeight()
                     .clip(pill)
-                    .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                    .clickable { onSelect(tab) },
+                    .background(if (isSelected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
+                    .clickable {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onSelect(tab)
+                    },
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    imageVector = tab.icon,
-                    contentDescription = tab.label,
-                    tint = if (isSelected) {
-                        MaterialTheme.colorScheme.onPrimary
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
-                    modifier = Modifier.size(24.dp),
-                )
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Icon(
+                        imageVector = tab.icon,
+                        contentDescription = tab.label,
+                        tint = if (isSelected) {
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.size(24.dp),
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = tab.label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isSelected) {
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
             }
         }
     }
 }
 
 /** 列表操作行：与 [NavRow] 同构——均分岛宽、胶囊圆角弧与岛平行、图标居中。
- *  播放 = primary 胶囊（对应导航"选中"pill）；收藏 / 评论 = 透明（对应"未选中"）。 */
+ *  播放 = secondaryContainer 胶囊（对应导航"选中"pill）；收藏 / 评论 = 透明（对应"未选中"）。 */
 @Composable
 private fun ActionNavRow(
     onPlayAll: () -> Unit,
     onPlaceholderAction: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val pill = RoundedCornerShape(10.dp)
+    val pill = RoundedCornerShape(50)
+    val haptics = LocalHapticFeedback.current
     Row(
-        modifier = modifier.padding(6.dp),
+        modifier = modifier.padding(horizontal = 4.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
@@ -696,14 +730,17 @@ private fun ActionNavRow(
                 .weight(1f)
                 .fillMaxHeight()
                 .clip(pill)
-                .background(MaterialTheme.colorScheme.primary)
-                .clickable { onPlayAll() },
+                .background(MaterialTheme.colorScheme.secondaryContainer)
+                .clickable {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onPlayAll()
+                },
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 Icons.Filled.PlayArrow,
                 contentDescription = "播放",
-                tint = MaterialTheme.colorScheme.onPrimary,
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
                 modifier = Modifier.size(24.dp),
             )
         }
@@ -734,6 +771,10 @@ private fun PlayerPage(
     fullHeightPx: Float,
     modifier: Modifier = Modifier,
 ) {
+    val haptics = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    val swipeThresholdPx = with(density) { SWIPE_THRESHOLD_DP.dp.toPx() }
+
     // 进入沉浸：隐藏系统导航栏，收起时恢复。保留状态栏。
     val view = LocalView.current
     val activity = LocalActivity.current
@@ -750,6 +791,11 @@ private fun PlayerPage(
     }
     // 返回键收起（仅全屏面在场时生效）。
     BackHandler { state.close() }
+
+    fun doClose() {
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        state.close()
+    }
 
     // 拦截触摸：避免盖住下面的导航/内容还能点到（无 pointer 的 Box 会让触摸穿透）。
     Box(
@@ -787,7 +833,7 @@ private fun PlayerPage(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
             ) {
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = { state.close() }) {
+                IconButton(onClick = { doClose() }) {
                     Icon(
                         Icons.Filled.KeyboardArrowDown,
                         contentDescription = "收起",
@@ -795,7 +841,31 @@ private fun PlayerPage(
                     )
                 }
             }
-            Box(Modifier.weight(1f).fillMaxWidth()) {
+            // 内容区：支持横滑切歌（与迷你条一致）。
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .pointerInput(player) {
+                        var accumulated = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = { accumulated = 0f },
+                            onDragEnd = {
+                                when {
+                                    accumulated <= -swipeThresholdPx -> {
+                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        PlayerHolder.skipNext(player)
+                                    }
+                                    accumulated >= swipeThresholdPx -> {
+                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        PlayerHolder.skipPrevious(player)
+                                    }
+                                }
+                            },
+                            onHorizontalDrag = { _, dragAmount -> accumulated += dragAmount },
+                        )
+                    },
+            ) {
                 PlayerPageContent(player)
             }
         }
@@ -848,7 +918,7 @@ private fun PlayerPageContent(player: Player) {
 
         // Track / metadata
         Text(
-            text = state.title.ifEmpty { "未设置歌曲" },
+            text = state.title.ifEmpty { "暂无播放" },
             style = MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
@@ -959,4 +1029,4 @@ private fun formatTime(ms: Long): String {
     return "%d:%02d".format(m, s)
 }
 
-private const val SWIPE_THRESHOLD_DP = 120
+private const val SWIPE_THRESHOLD_DP = 56
