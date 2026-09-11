@@ -45,7 +45,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
@@ -55,12 +54,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -91,6 +98,7 @@ import com.thripleq.nume.core.playback.PlayerHolder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
@@ -210,8 +218,16 @@ fun rememberPlayerPosition(
     return positionMs
 }
 
-/** 播放页「打开程度」：0 = 完全收起在屏下，1 = 盖满全屏。 */
-private const val OPEN_THRESHOLD = 0.25f
+/** 播放页「打开程度」：0 = 完全收起在屏下，1 = 盖满全屏。
+ *  两段式：p∈[0, HALF_PROGRESS] 悬浮卡片从 dock 顶升起（dock 保持可见）；
+ *  p∈[HALF_PROGRESS, 1] 卡片放大盖满全屏（dock 淡出）。 */
+private const val HALF_PROGRESS = 0.5f
+
+/** 松手时，progress 低于它回落到 dock。 */
+private const val SNAP_BACK_BELOW = 0.2f
+
+/** 松手时，progress 高于它吸附全屏；介于 [SNAP_BACK_BELOW] 与它之间吸附半高。 */
+private const val SNAP_FULL_ABOVE = 0.7f
 
 /** 松手时向上甩的速度（px/s）超过它则视为想打开。 */
 private const val FLING_UP_PPS = 500f
@@ -243,19 +259,25 @@ class PlayerDockState internal constructor(private val scope: CoroutineScope) {
 
     private var animJob: Job? = null
 
-    /** 点击迷你条/列表项/我的：整页动画弹出。 */
-    fun open() {
+    /** 点击迷你条/列表项/我的：整页动画弹出。
+     *  [toFull] = false 时两段式先弹到半高悬浮卡（p=0.5），可继续上滑看全屏；
+     *  true 时直接盖满全屏（列表项点歌用）。 */
+    fun open(toFull: Boolean = false) {
         animJob?.cancel()
         animJob = scope.launch {
             if (!open) {
                 open = true
                 progress.snapTo(0f)
             }
-            progress.animateTo(1f, SPRING_OPEN)
+            // 半高用干净弹簧（无回弹过冲，卡到位即停）；全屏才用弹性。
+            progress.animateTo(
+                if (toFull) 1f else HALF_PROGRESS,
+                if (toFull) SPRING_OPEN else SPRING_CLOSE,
+            )
         }
     }
 
-    /** 收起箭头/返回键。 */
+    /** 收起箭头/返回键：无论当前在哪个档位，都回落收起。 */
     fun close() {
         animJob?.cancel()
         animJob = scope.launch { runClose() }
@@ -272,19 +294,28 @@ class PlayerDockState internal constructor(private val scope: CoroutineScope) {
         scope.launch { progress.snapTo(lift.coerceIn(0f, 1f)) }
     }
 
-    /** 松手吸附：到阈值/甩速则弹满，否则回落收起（尾帧落地后才卸载）。
-     * 传入 [fullHeightPx] 将甩速换算为 progress/s 供 spring 续跑，手感更自然。 */
+    /** 松手吸附（两段式）：progress 分档决定去向——
+     *  < [SNAP_BACK_BELOW] → 回落 dock；≥ [SNAP_FULL_ABOVE] 或向上甩速足够 → 全屏；
+     *  其余 → 半高悬浮卡。传入 [fullHeightPx] 将甩速换算为 progress/s 供 spring 续跑。 */
     fun settle(velUpPxPerSec: Float, fullHeightPx: Float = 1f) {
         animJob?.cancel()
         animJob = scope.launch {
             val velProgress = (velUpPxPerSec / fullHeightPx).coerceIn(-10f, 10f)
-            if (progress.value >= OPEN_THRESHOLD || velUpPxPerSec >= FLING_UP_PPS) {
-                progress.animateTo(1f, SPRING_OPEN, initialVelocity = velProgress)
-            } else {
+            val target = when {
+                velUpPxPerSec >= FLING_UP_PPS -> 1f
+                progress.value >= SNAP_FULL_ABOVE -> 1f
+                progress.value >= SNAP_BACK_BELOW -> HALF_PROGRESS
+                else -> 0f
+            }
+            if (target == 0f) {
                 progress.animateTo(0f, SPRING_CLOSE, initialVelocity = velProgress)
                 withFrameNanos {}
                 withFrameNanos {}
                 open = false
+            } else if (target == 1f) {
+                progress.animateTo(1f, SPRING_OPEN, initialVelocity = velProgress)
+            } else {
+                progress.animateTo(HALF_PROGRESS, SPRING_CLOSE, initialVelocity = velProgress)
             }
         }
     }
@@ -345,7 +376,7 @@ fun PlayerDock(
     }
 
     Box(Modifier.fillMaxSize()) {
-        // ---- 底部常驻 dock（画在全屏面下层，被它盖住；progress 只用于淡出，draw 读取）----
+        // ---- 底部常驻 dock（画在全屏面下层，被它盖住；p≤半高时保持可见，>半高才淡出）----
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -353,7 +384,12 @@ fun PlayerDock(
                 .shadow(2.dp, shape, clip = false)
                 .clip(shape)
                 .background(MaterialTheme.colorScheme.surfaceContainer)
-                .graphicsLayer { alpha = (1f - state.progress.value).coerceIn(0f, 1f) }
+                .graphicsLayer {
+                    // 两段式：半高悬浮卡在 dock 顶之上，dock 完整可见；只有盖满全屏才淡出。
+                    val p = state.progress.value
+                    alpha = if (p <= HALF_PROGRESS) 1f
+                    else (1f - (p - HALF_PROGRESS) / (1f - HALF_PROGRESS)).coerceIn(0f, 1f)
+                }
                 .onSizeChanged { dockHeightPx = it.height },
         ) {
             // 迷你播放条：点击进播放页；上滑 1:1 拉出播放页；左右滑切歌。
@@ -416,6 +452,7 @@ fun PlayerDock(
                 state = state,
                 player = player,
                 fullHeightPx = fullHeightPx,
+                dockHeightPx = dockHeightPx.toFloat(),
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -770,30 +807,73 @@ private fun ActionNavRow(
     }
 }
 
-/** 全屏播放面：盖满窗口、最上层、沉在屏下时不可见。 */
+/** 全屏播放面（两段式）：p=0 沉在屏下；p∈(0,0.5] 悬浮卡片从 dock 顶升起
+ *  （dock 保持可见可点）；p∈(0.5,1] 卡片放大盖满全屏（dock 淡出）。
+ *  所有几何/圆角/压暗都在 draw 阶段（graphicsLayer + drawWithContent）读 progress，
+ *  零重组；组合与否只由 [state.open] 决定（铁律）。
+ */
 @Composable
 private fun PlayerPage(
     state: PlayerDockState,
     player: Player,
     fullHeightPx: Float,
+    dockHeightPx: Float,
     modifier: Modifier = Modifier,
 ) {
     val haptics = LocalHapticFeedback.current
     val density = LocalDensity.current
     val swipeThresholdPx = with(density) { SWIPE_THRESHOLD_DP.dp.toPx() }
+    val fullWidthPx = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
+    val edgePx = with(density) { 10.dp.toPx() }
+    val cornerPx = with(density) { 24.dp.toPx() }
+    val cardColor = MaterialTheme.colorScheme.surfaceContainer
 
-    // 进入沉浸：隐藏系统导航栏，收起时恢复。保留状态栏。
+    // 两段矩形（px）：
+    //   closed = 整块沉在屏下（底在 fullH 之下）；half = 悬浮卡，底距 dock 顶一个 edge；
+    //   full  = 盖满全屏。progress 在 [0,0.5] 时 closed→half，在 (0.5,1] 时 half→full。
+    fun cardRect(p: Float): androidx.compose.ui.geometry.Rect {
+        val cardH = fullHeightPx - dockHeightPx - 2f * edgePx
+        val closed = androidx.compose.ui.geometry.Rect(0f, fullHeightPx, fullWidthPx, fullHeightPx + cardH)
+        val half = androidx.compose.ui.geometry.Rect(
+            edgePx, edgePx,
+            fullWidthPx - edgePx, fullHeightPx - dockHeightPx - edgePx,
+        )
+        val full = androidx.compose.ui.geometry.Rect(0f, 0f, fullWidthPx, fullHeightPx)
+        return if (p <= HALF_PROGRESS) {
+            val t = p / HALF_PROGRESS
+            androidx.compose.ui.geometry.Rect(
+                closed.left + (half.left - closed.left) * t,
+                closed.top + (half.top - closed.top) * t,
+                closed.right + (half.right - closed.right) * t,
+                closed.bottom + (half.bottom - closed.bottom) * t,
+            )
+        } else {
+            val t = (p - HALF_PROGRESS) / (1f - HALF_PROGRESS)
+            androidx.compose.ui.geometry.Rect(
+                half.left + (full.left - half.left) * t,
+                half.top + (full.top - half.top) * t,
+                half.right + (full.right - half.right) * t,
+                half.bottom + (full.bottom - half.bottom) * t,
+            )
+        }
+    }
+
+    // 沉浸：只在接近全屏时隐藏系统导航栏（半高时保持显示，dock 的 navigationBarsPadding
+    // 布局稳定）；收起/回落到半高时恢复。用 snapshotFlow 轮询 progress，不引重组。
     val view = LocalView.current
     val activity = LocalActivity.current
-    DisposableEffect(activity) {
-        val controller = activity?.let { WindowCompat.getInsetsController(it.window, view) }
+    val controller = activity?.let { WindowCompat.getInsetsController(it.window, view) }
+    LaunchedEffect(controller) {
         if (controller != null) {
             controller.systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            controller.hide(WindowInsetsCompat.Type.navigationBars())
-        }
-        onDispose {
-            controller?.show(WindowInsetsCompat.Type.navigationBars())
+            snapshotFlow { state.progress.value }.collect { p ->
+                if (p >= 0.9f) {
+                    controller.hide(WindowInsetsCompat.Type.navigationBars())
+                } else {
+                    controller.show(WindowInsetsCompat.Type.navigationBars())
+                }
+            }
         }
     }
     // 返回键收起（仅全屏面在场时生效）。
@@ -804,14 +884,85 @@ private fun PlayerPage(
         state.close()
     }
 
-    // 拦截触摸：避免盖住下面的导航/内容还能点到（无 pointer 的 Box 会让触摸穿透）。
     Box(
         modifier = modifier
+            // 悬浮卡/全屏播放面：graphicsLayer 做平移+缩放（hit-test 随 transform），
+            // drawWithContent 裁剪圆角（随 progress 收小到 0）。二者都在 draw 阶段读 progress。
+            // 卡片本身是实心 surface（在 clip 内绘制），透不出底下内容，无需额外 scrim。
+            .graphicsLayer {
+                val r = cardRect(state.progress.value)
+                val sx = (r.right - r.left) / fullWidthPx
+                val sy = (r.bottom - r.top) / fullHeightPx
+                scaleX = sx
+                scaleY = sy
+                translationX = r.left
+                translationY = r.top
+                transformOrigin = TransformOrigin(0f, 0f)
+            }
+            .drawWithContent {
+                val p = state.progress.value
+                val expand = ((p - HALF_PROGRESS) / (1f - HALF_PROGRESS)).coerceIn(0f, 1f)
+                val radius = cornerPx * (1f - expand)
+                clipPath(
+                    path = Path().apply {
+                        addRoundRect(
+                            RoundRect(0f, 0f, size.width, size.height, CornerRadius(radius)),
+                        )
+                    },
+                ) {
+                    // 实心卡片背景（在 clip 内绘制，圆角裁剪）：半高时是悬浮实心卡，
+                    // 全屏时铺满，不再透出底下内容。
+                    drawRect(color = cardColor)
+                    this@drawWithContent.drawContent()
+                }
+            }
+            // 拦截触摸：只拦卡片实际区域（graphicsLayer transform 会一并变换 hit-test），
+            // 半高时 dock 区域不在此矩形内 → 仍可点。
             .clickable(
                 interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                 indication = null,
             ) { }
-            .graphicsLayer { translationY = fullHeightPx * (1f - state.progress.value) },
+            // 竖向拖拽：卡片内上滑续开到全屏、下拉回 dock/收起。
+            .pointerInput(state, fullHeightPx) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    if (down.isConsumed) return@awaitEachGesture
+                    val id = down.id
+                    val slop = viewConfiguration.touchSlop
+                    val tracker = VelocityTracker()
+                    var axis = 0
+                    var vertCum = 0f
+                    var horizCum = 0f
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == id } ?: break
+                        if (change.isConsumed) break
+                        if (!change.pressed) {
+                            if (axis == 1) {
+                                state.settle(-tracker.calculateVelocity().y, fullHeightPx)
+                            }
+                            break
+                        }
+                        tracker.addPosition(change.uptimeMillis, change.position)
+                        val dx = change.position.x - change.previousPosition.x
+                        val dy = change.position.y - change.previousPosition.y
+                        if (axis == 0) {
+                            vertCum += dy
+                            horizCum += dx
+                            if (abs(vertCum) >= slop || abs(horizCum) >= slop) {
+                                axis = if (abs(vertCum) >= abs(horizCum)) 1 else 2
+                            }
+                        }
+                        when (axis) {
+                            1 -> {
+                                change.consume()
+                                state.dragTo(state.progress.value - vertCum / fullHeightPx)
+                            }
+                            2 -> break // 横向交给内容区切歌 detector
+                        }
+                    }
+                }
+            },
     ) {
         Column(
             Modifier

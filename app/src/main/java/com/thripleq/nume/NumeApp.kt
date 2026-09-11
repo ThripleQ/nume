@@ -115,7 +115,8 @@ fun NumeApp() {
     // 点击迷你条/列表项 → state.open() 整页弹出；迷你条上滑 1:1 跟手由组件内手势驱动。
     val dockState = rememberPlayerDockState()
     fun openPlayer() {
-        dockState.open()
+        // 列表项点歌：直接盖满全屏（两段式的第二段）。
+        dockState.open(toFull = true)
     }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
