@@ -12,7 +12,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -27,13 +26,13 @@ import androidx.navigation.toRoute
 import com.thripleq.nume.core.playback.PlayerHolder
 import com.thripleq.nume.core.repo.TrackCollection
 import com.thripleq.nume.ui.playerbar.BottomTab
-import com.thripleq.nume.ui.playerbar.PlayerCapsule
+import com.thripleq.nume.ui.playerbar.PlayerDock
+import com.thripleq.nume.ui.playerbar.rememberPlayerDockState
 import com.thripleq.nume.ui.profile.ProfileViewModel
 import com.thripleq.nume.ui.profile.TrackListUiState
 import com.thripleq.nume.ui.profile.TrackListViewModel
 import com.thripleq.nume.ui.screens.HomeScreen
 import com.thripleq.nume.ui.screens.LibraryScreen
-import com.thripleq.nume.ui.screens.PlayerSheet
 import com.thripleq.nume.ui.screens.ProfileScreen
 import com.thripleq.nume.ui.screens.SearchScreen
 import com.thripleq.nume.ui.screens.TrackListScreen
@@ -69,11 +68,11 @@ data class TrackListDestination(val source: String, val id: String, val title: S
 object WebLogin
 
 /**
- * Root of the Compose UI: navigation graph + docked island + player sheet.
+ * Root of the Compose UI: navigation graph + docked island + full-screen player.
  *
- * 落地常驻胶囊岛：全宽贴底、顶部圆角、去白描边、surfaceContainerHighest。
- * 岛内 = 顶部拉手 + 播放状态栏（可收起）+ 底部导航行；拉手上拉 → 全屏播放页。
- * 播放页用 [PlayerSheet]（ExpandableShell 从岛向上拉开成沉浸全屏），覆盖岛本身。
+ * 常驻底部 dock（拉手+迷你播放条+底部导航）与全屏播放页合体在 [PlayerDock]：
+ * 收起时只露 dock；点击迷你条整页弹出，迷你条上滑 1:1 跟手拉出全屏播放页。
+ * 播放页盖住 dock 本身与下方内容，收起箭头/返回键回落。
  */
 @Composable
 fun NumeApp() {
@@ -105,14 +104,14 @@ fun NumeApp() {
     val isListDetail = destination?.hasRoute<TrackListDestination>() == true ||
         destination?.hasRoute<ChartDestination>() == true
 
-    // dock 总高（dp）：PlayerCapsule 上报，供 Profile 展开壳底部让位。
+    // dock 总高（dp）：PlayerDock 上报，供 Profile 展开壳底部让位。
     var islandHeightDp by remember { mutableStateOf(0f) }
 
-    // 播放页显式开关：点播放条/列表项 → 置位打开；PlayerSheet 播完收起动画回调复位。
-    // 与 dock 完全解耦：不共享锚点、不联动几何，播放页是独立最上层覆盖层。
-    var playerSheetOpen by remember { mutableStateOf(false) }
+    // 播放页状态：常驻 dock 与全屏播放页合体（同一组件/同一份 progress）。
+    // 点击迷你条/列表项 → state.open() 整页弹出；迷你条上滑 1:1 跟手由组件内手势驱动。
+    val dockState = rememberPlayerDockState()
     fun openPlayer() {
-        playerSheetOpen = true
+        dockState.open()
     }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
@@ -205,9 +204,10 @@ fun NumeApp() {
             }
         }
 
-        // 常驻底部 dock：播放条 + 列表操作行 + 导航。静态，不参与播放页动画。
-        PlayerCapsule(
+        // 常驻 dock + 全屏播放页（合体，单点挂载）：覆盖在内容层之上。
+        PlayerDock(
             player = player,
+            state = dockState,
             selected = selectedTab,
             onSelectTab = { tab ->
                 navController.navigate(tab.route) {
@@ -223,18 +223,7 @@ fun NumeApp() {
             onPlaceholderAction = {
                 android.widget.Toast.makeText(context, "开发中", android.widget.Toast.LENGTH_SHORT).show()
             },
-            onOpenPlayer = ::openPlayer,
             onIslandHeightChange = { islandHeightDp = it },
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth(),
         )
-
-        // 全屏播放页覆盖层：最上层、盖住 dock；组合由显式开关驱动，内部自管动画。
-        if (playerSheetOpen) {
-            PlayerSheet(
-                onDismiss = { playerSheetOpen = false },
-            )
-        }
     }
 }
