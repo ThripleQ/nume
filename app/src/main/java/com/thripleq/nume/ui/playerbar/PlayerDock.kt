@@ -4,14 +4,20 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.AnchoredDraggableState
+import androidx.compose.foundation.gestures.DraggableAnchors
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.anchoredDraggable
+import androidx.compose.foundation.gestures.animateTo
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.snapTo
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,6 +54,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -62,6 +69,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Color
@@ -72,8 +80,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -83,6 +91,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.toSize
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -218,19 +227,9 @@ fun rememberPlayerPosition(
     return positionMs
 }
 
-/** 播放页「打开程度」：0 = 完全收起在屏下，1 = 盖满全屏。
- *  两段式：p∈[0, HALF_PROGRESS] 悬浮卡片从 dock 顶升起（dock 保持可见）；
- *  p∈[HALF_PROGRESS, 1] 卡片放大盖满全屏（dock 淡出）。 */
-private const val HALF_PROGRESS = 0.5f
-
-/** 松手时，progress 低于它回落到 dock。 */
-private const val SNAP_BACK_BELOW = 0.2f
-
-/** 松手时，progress 高于它吸附全屏；介于 [SNAP_BACK_BELOW] 与它之间吸附半高。 */
-private const val SNAP_FULL_ABOVE = 0.7f
-
-/** 松手时向上甩的速度（px/s）超过它则视为想打开。 */
-private const val FLING_UP_PPS = 500f
+/** 播放页「打开程度」：0 = 完全收起在迷你条胶囊，2 = 盖满全屏。
+ *  两段式：p∈[0,1] 胶囊原位展开成悬浮卡（dock 保持可见）；
+ *  p∈[1,2] 卡片放大盖满全屏（dock 淡出）。 */
 
 /** spring 动画参数：打开时略带弹性，收起时干净无回弹。 */
 private val SPRING_OPEN = spring<Float>(
@@ -242,86 +241,70 @@ private val SPRING_CLOSE = spring<Float>(
     stiffness = Spring.StiffnessMedium,
 )
 
-/**
- * 播放页状态：dock 与全屏播放页**共用同一份**进度，但只供全屏面在
- * graphicsLayer 里读（几何）→ 不触发重组；组合与否只由 [open] 显式布尔决定。
- *
- * 手势写入口集中在 [beginDrag]/[dragTo]/[settle]（迷你条上滑 1:1 跟手），
- * 外部入口 [open]（点击迷你条/列表项整页弹开）、[close]（收起箭头/返回键）。
- */
-class PlayerDockState internal constructor(private val scope: CoroutineScope) {
-    /** 0..1，播放页升起程度。只应在 draw 阶段（graphicsLayer）读，勿在组合读。 */
-    val progress = Animatable(0f)
+/** 播放页「档位」：三档——收起(dock 胶囊) / 卡片 / 全屏。 */
+enum class PlayerSheet { Closed, Half, Full }
 
-    /** 全屏播放面是否在组合中：进入会话即 true，完全收起（尾帧落地）后才复位。 */
+/**
+ * 播放页状态：用官方 [AnchoredDraggableState] 管理「收起/卡片/全屏」三档之间的拖动与吸附。
+ *
+ * 锚点像素 = 胶囊展开进度（像素），几何是「胶囊 → 悬浮卡 → 全屏」两段 lerp：
+ * - [PlayerSheet.Closed] = 0          → 壳收在迷你条胶囊原位
+ * - [PlayerSheet.Half]   = travelPx   → 壳展开成悬浮卡（progress == 1）
+ * - [PlayerSheet.Full]   = 2*travelPx → 壳盖满全屏（progress == 2）
+ * [progress] = offset / travelPx ∈ [0,2]，在 draw 阶段读，不触发重组。
+ *
+ * - 手势由 `Modifier.anchoredDraggable(state)` 驱动（内部处理 slop 仲裁/松手吸附/甩动）。
+ * - 组合与否只由 [open] 显式布尔决定，由 offset/settledValue 观察驱动。
+ */
+class PlayerDockState internal constructor(
+    val sheetState: AnchoredDraggableState<PlayerSheet>,
+    private val scope: CoroutineScope,
+) {
+    /** 全屏播放面是否在组合中：进入会话即 true，完全收起（尾帧落地）后才复位。
+     *  内部由 [AnchoredDraggableState] 的 offset/settledValue 观察驱动，外部只读。 */
     var open by mutableStateOf(false)
-        private set
+        internal set
+
+    /** 手势行程（px）：从迷你条胶囊到「全屏」的展开总距（卡片是它的一半）。 */
+    var travelPx by mutableFloatStateOf(1f)
+
+    /** 胶囊展开进度 0..2（[0,1]=胶囊→卡片，[1,2]=卡片→全屏），由 [AnchoredDraggableState.offset] 归一化。
+     *  只应在 draw 阶段（graphicsLayer）读，勿在组合读。 */
+    val progress: Float
+        get() = (sheetState.offset / travelPx).coerceIn(0f, 2f)
+
+    /** 迷你条胶囊的窗口坐标 Rect（动画起点）。由 PlayerBar 上报；拖动/收起时定格使用。 */
+    var capsuleRect by mutableStateOf<Rect?>(null)
+        internal set
 
     private var animJob: Job? = null
 
     /** 点击迷你条/列表项/我的：整页动画弹出。
-     *  [toFull] = false 时两段式先弹到半高悬浮卡（p=0.5），可继续上滑看全屏；
-     *  true 时直接盖满全屏（列表项点歌用）。 */
+     *  [toFull] = false 时两段式先弹到卡片（Half），可继续上滑看全屏；
+     *  true 时直接盖满全屏（列表项点歌/点击迷你条用）。 */
     fun open(toFull: Boolean = false) {
         animJob?.cancel()
         animJob = scope.launch {
             if (!open) {
                 open = true
-                progress.snapTo(0f)
+                sheetState.snapTo(PlayerSheet.Closed)
             }
-            // 半高用干净弹簧（无回弹过冲，卡到位即停）；全屏才用弹性。
-            progress.animateTo(
-                if (toFull) 1f else HALF_PROGRESS,
+            // 卡片用干净弹簧（无回弹过冲，卡到位即停）；全屏才用弹性。
+            sheetState.animateTo(
+                if (toFull) PlayerSheet.Full else PlayerSheet.Half,
                 if (toFull) SPRING_OPEN else SPRING_CLOSE,
             )
         }
     }
 
-    /** 收起箭头/返回键：无论当前在哪个档位，都回落收起。 */
+    /** 收起箭头/返回键：无论当前在哪个档位，都缩回迷你条。 */
     fun close() {
         animJob?.cancel()
         animJob = scope.launch { runClose() }
     }
 
-    /** 迷你条上滑过 slop：全屏面先组合（此时 p=0，整块在屏下不可见），等 [dragTo] 跟手。 */
-    fun beginDrag() {
-        if (!open) open = true
-    }
-
-    /** 1:1 跟手：把升起程度直接设到 [lift]（0..1）。目标是绝对位置，先后顺序无关，不会抖动。 */
-    fun dragTo(lift: Float) {
-        animJob?.cancel()
-        scope.launch { progress.snapTo(lift.coerceIn(0f, 1f)) }
-    }
-
-    /** 松手吸附（两段式）：progress 分档决定去向——
-     *  < [SNAP_BACK_BELOW] → 回落 dock；≥ [SNAP_FULL_ABOVE] 或向上甩速足够 → 全屏；
-     *  其余 → 半高悬浮卡。传入 [fullHeightPx] 将甩速换算为 progress/s 供 spring 续跑。 */
-    fun settle(velUpPxPerSec: Float, fullHeightPx: Float = 1f) {
-        animJob?.cancel()
-        animJob = scope.launch {
-            val velProgress = (velUpPxPerSec / fullHeightPx).coerceIn(-10f, 10f)
-            val target = when {
-                velUpPxPerSec >= FLING_UP_PPS -> 1f
-                progress.value >= SNAP_FULL_ABOVE -> 1f
-                progress.value >= SNAP_BACK_BELOW -> HALF_PROGRESS
-                else -> 0f
-            }
-            if (target == 0f) {
-                progress.animateTo(0f, SPRING_CLOSE, initialVelocity = velProgress)
-                withFrameNanos {}
-                withFrameNanos {}
-                open = false
-            } else if (target == 1f) {
-                progress.animateTo(1f, SPRING_OPEN, initialVelocity = velProgress)
-            } else {
-                progress.animateTo(HALF_PROGRESS, SPRING_CLOSE, initialVelocity = velProgress)
-            }
-        }
-    }
-
     private suspend fun runClose() {
-        progress.animateTo(0f, SPRING_CLOSE)
+        sheetState.animateTo(PlayerSheet.Closed, SPRING_CLOSE)
         // animateTo 返回后再等两帧，确保尾帧真正落地才卸载，避免收起闪最后一帧。
         withFrameNanos {}
         withFrameNanos {}
@@ -333,7 +316,22 @@ class PlayerDockState internal constructor(private val scope: CoroutineScope) {
 @Composable
 fun rememberPlayerDockState(): PlayerDockState {
     val scope = rememberCoroutineScope()
-    return remember { PlayerDockState(scope) }
+    // 官方 AnchoredDraggableState：三锚点（收起/半高/全屏），锚点像素值（offset）在
+    // PlayerDock 布局后由 updateAnchors 填充（依赖 dock 高/屏高）。初始只有一个锚点。
+    val sheetState = remember {
+        AnchoredDraggableState(
+            initialValue = PlayerSheet.Closed,
+            anchors = DraggableAnchors {
+                PlayerSheet.Closed at 0f
+            },
+            positionalThreshold = { distance -> distance * 0.5f },
+            velocityThreshold = { 1200f },
+            snapAnimationSpec = SPRING_CLOSE,
+            decayAnimationSpec = exponentialDecay(),
+            confirmValueChange = { true },
+        )
+    }
+    return remember { PlayerDockState(sheetState, scope) }
 }
 
 /**
@@ -375,6 +373,39 @@ fun PlayerDock(
         if (dockHeightPx > 0) onIslandHeightChange(with(density) { dockHeightPx.toDp() }.value)
     }
 
+    // 手势 1:1 行程：手指从迷你条顶拉到全屏顶的可见距离。
+    // 整屏高（2400px）里 dock 占了 ~390px，若拿整屏高做分母，手指要走满一屏 progress 才到 1，
+    // 实际只能走 ~2000px → 拉满手卡片才升一小截 → 感觉"反的/费劲"。
+    // 锚点像素以此为准：Closed=0、Half=travelPx*0.5、Full=travelPx。
+    val travelPx = (fullHeightPx - dockHeightPx).coerceAtLeast(1f)
+
+    // 把行程同步进 state，并把三档锚点像素注册给 AnchoredDraggableState（拖动/吸附据此 1:1）。
+    // 锚点 = 胶囊展开进度（px）：Closed=0、Half=travelPx（展开成卡片）、Full=2*travelPx（盖满全屏）。
+    LaunchedEffect(travelPx) {
+        state.travelPx = travelPx
+        state.sheetState.updateAnchors(
+            DraggableAnchors {
+                PlayerSheet.Closed at 0f
+                PlayerSheet.Half at travelPx
+                PlayerSheet.Full at 2f * travelPx
+            },
+            newTarget = state.sheetState.currentValue,
+        )
+    }
+
+    // 组合与否由锚点状态驱动：迷你条一拖动（offset>0）就组合播放面；
+    // 完全落回 dock 锚点（settled）才卸载。替代手搓的 beginDrag。
+    LaunchedEffect(state.sheetState) {
+        snapshotFlow { state.sheetState.offset }.collect { offset ->
+            if (offset > 1f) state.open = true
+        }
+    }
+    LaunchedEffect(state.sheetState) {
+        snapshotFlow { state.sheetState.settledValue }.collect { v ->
+            if (v == PlayerSheet.Closed) state.open = false
+        }
+    }
+
     Box(Modifier.fillMaxSize()) {
         // ---- 底部常驻 dock（画在全屏面下层，被它盖住；p≤半高时保持可见，>半高才淡出）----
         Column(
@@ -385,10 +416,11 @@ fun PlayerDock(
                 .clip(shape)
                 .background(MaterialTheme.colorScheme.surfaceContainer)
                 .graphicsLayer {
-                    // 两段式：半高悬浮卡在 dock 顶之上，dock 完整可见；只有盖满全屏才淡出。
-                    val p = state.progress.value
-                    alpha = if (p <= HALF_PROGRESS) 1f
-                    else (1f - (p - HALF_PROGRESS) / (1f - HALF_PROGRESS)).coerceIn(0f, 1f)
+                    // 胶囊展开：卡片档（p≤1）壳悬浮在 dock 顶之上，dock 完整可见；
+                    // 只有继续展开盖满全屏（p>1）才淡出 dock。
+                    val p = state.progress
+                    alpha = if (p <= 1f) 1f
+                    else (2f - p).coerceIn(0f, 1f)
                 }
                 .onSizeChanged { dockHeightPx = it.height },
         ) {
@@ -398,7 +430,6 @@ fun PlayerDock(
                 playerState = playerState,
                 positionState = positionState,
                 player = player,
-                fullHeightPx = fullHeightPx,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(barHeight)
@@ -473,7 +504,6 @@ private fun PlayerBar(
     playerState: PlayerUiState,
     positionState: State<Long>,
     player: Player,
-    fullHeightPx: Float,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -488,7 +518,26 @@ private fun PlayerBar(
             .shadow(3.dp, capsule, clip = false)
             .clip(capsule)
             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            // 横滑切歌：独立 detector；竖向/点击见下方手动手势。
+            // 上报迷你条胶囊的窗口坐标：胶囊展开动画的起点（从胶囊原位长成卡片/全屏）。
+            // 必须在 padding 之前测，bounds 才是视觉胶囊本身。
+            .onGloballyPositioned { coords ->
+                state.capsuleRect = Rect(coords.localToWindow(Offset.Zero), coords.size.toSize())
+            }
+            // 官方 anchoredDraggable：竖向把播放面拉起来（内部处理 slop 仲裁 / 松手吸附 / 甩动）。
+            // reverseDirection=true：上滑（y 减小）→ offset 增大 → 展开；下滑 → 收起。
+            // 迷你条在 dock 里、dock 被播放面盖住时（全屏）不可点，天然不冲突。
+            .anchoredDraggable(
+                state.sheetState,
+                reverseDirection = true,
+                orientation = Orientation.Vertical,
+            )
+            // 点击 → 胶囊原位展开到全屏（经过卡片矩形，一气呵成）。
+            // 若拖动被 anchoredDraggable 消费，点击不会触发。
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) { state.open(toFull = true) }
+            // 横滑切歌：独立 detector；与竖向 anchoredDraggable 方向正交，互不干扰。
             .pointerInput(player) {
                 var accumulated = 0f
                 detectHorizontalDragGestures(
@@ -507,59 +556,6 @@ private fun PlayerBar(
                     },
                     onHorizontalDrag = { _, dragAmount -> accumulated += dragAmount },
                 )
-            }
-            // 手动手势：点击 / 竖向拉起播放页（同一 pointerInput 仲裁，避免多 detector 抢 slop）。
-            .pointerInput(player, fullHeightPx) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    if (down.isConsumed) return@awaitEachGesture // 播放/暂停等子按钮吃掉按下
-                    val id = down.id
-                    val slop = viewConfiguration.touchSlop
-                    val tracker = VelocityTracker()
-                    // 0 = 未定轴，1 = 竖向（拉起播放页），2 = 横向（交还切歌 detector）
-                    var axis = 0
-                    var vertCum = 0f
-                    var horizCum = 0f
-
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == id } ?: break
-                        // 已被子节点或横滑 detector 消费（播放按钮、切歌）→ 不当作点击/拉起
-                        if (change.isConsumed) break
-
-                        if (!change.pressed) {
-                            // 抬手：没走出 slop = 点击；否则若在竖向会话里 → 吸附
-                            if (axis == 0) {
-                                state.open()
-                            } else if (axis == 1) {
-                                state.settle(-tracker.calculateVelocity().y, fullHeightPx)
-                            }
-                            break
-                        }
-
-                        tracker.addPosition(change.uptimeMillis, change.position)
-                        val dx = change.position.x - change.previousPosition.x
-                        val dy = change.position.y - change.previousPosition.y
-
-                        if (axis == 0) {
-                            vertCum += dy
-                            horizCum += dx
-                            if (abs(vertCum) >= slop || abs(horizCum) >= slop) {
-                                axis = if (abs(vertCum) >= abs(horizCum)) 1 else 2
-                                if (axis == 1) state.beginDrag()
-                            }
-                        }
-
-                        when (axis) {
-                            1 -> {
-                                // 竖向：消费并让播放面跟手（手指上移 dy<0 → lift 增大）
-                                change.consume()
-                                state.dragTo(-vertCum / fullHeightPx)
-                            }
-                            2 -> break // 横向交给切歌 detector，本会话结束
-                        }
-                    }
-                }
             }
             .padding(horizontal = 12.dp),
     ) {
@@ -825,37 +821,36 @@ private fun PlayerPage(
     val swipeThresholdPx = with(density) { SWIPE_THRESHOLD_DP.dp.toPx() }
     val fullWidthPx = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
     val edgePx = with(density) { 10.dp.toPx() }
-    val cornerPx = with(density) { 24.dp.toPx() }
+    val capsuleCornerPx = with(density) { 22.dp.toPx() }
     val cardColor = MaterialTheme.colorScheme.surfaceContainer
 
-    // 两段矩形（px）：
-    //   closed = 整块沉在屏下（底在 fullH 之下）；half = 悬浮卡，底距 dock 顶一个 edge；
-    //   full  = 盖满全屏。progress 在 [0,0.5] 时 closed→half，在 (0.5,1] 时 half→full。
-    fun cardRect(p: Float): androidx.compose.ui.geometry.Rect {
-        val cardH = fullHeightPx - dockHeightPx - 2f * edgePx
-        val closed = androidx.compose.ui.geometry.Rect(0f, fullHeightPx, fullWidthPx, fullHeightPx + cardH)
-        val half = androidx.compose.ui.geometry.Rect(
+    // 三档矩形（px）：
+    //   capsule = 迷你条胶囊原位（窗口坐标，展开起点；无值时用兜底几何）；
+    //   card    = 悬浮卡（底距 dock 顶一个 edge、四周 10dp 边距）；
+    //   full    = 盖满全屏。
+    // progress ∈ [0,1]：capsule→card 插值；∈ (1,2]：card→full 插值。两段在 p=1 处连续。
+    fun lerpRect(a: androidx.compose.ui.geometry.Rect, b: androidx.compose.ui.geometry.Rect, t: Float) =
+        androidx.compose.ui.geometry.Rect(
+            a.left + (b.left - a.left) * t,
+            a.top + (b.top - a.top) * t,
+            a.right + (b.right - a.right) * t,
+            a.bottom + (b.bottom - a.bottom) * t,
+        )
+
+    fun shellRect(p: Float): androidx.compose.ui.geometry.Rect {
+        val card = androidx.compose.ui.geometry.Rect(
             edgePx, edgePx,
             fullWidthPx - edgePx, fullHeightPx - dockHeightPx - edgePx,
         )
         val full = androidx.compose.ui.geometry.Rect(0f, 0f, fullWidthPx, fullHeightPx)
-        return if (p <= HALF_PROGRESS) {
-            val t = p / HALF_PROGRESS
-            androidx.compose.ui.geometry.Rect(
-                closed.left + (half.left - closed.left) * t,
-                closed.top + (half.top - closed.top) * t,
-                closed.right + (half.right - closed.right) * t,
-                closed.bottom + (half.bottom - closed.bottom) * t,
-            )
-        } else {
-            val t = (p - HALF_PROGRESS) / (1f - HALF_PROGRESS)
-            androidx.compose.ui.geometry.Rect(
-                half.left + (full.left - half.left) * t,
-                half.top + (full.top - half.top) * t,
-                half.right + (full.right - half.right) * t,
-                half.bottom + (full.bottom - half.bottom) * t,
-            )
-        }
+        val capsule = state.capsuleRect ?: androidx.compose.ui.geometry.Rect(
+            edgePx, fullHeightPx - dockHeightPx + edgePx,
+            fullWidthPx - edgePx, fullHeightPx,
+        )
+        // 两段插值，p=1 处首尾相连（t0=1 时 card，t1=0 时也是 card）。
+        val t0 = (p / 1f).coerceIn(0f, 1f)          // [0,1] capsule→card
+        val t1 = ((p - 1f) / 1f).coerceIn(0f, 1f)   // [1,2] card→full
+        return lerpRect(lerpRect(capsule, card, t0), full, t1)
     }
 
     // 沉浸：只在接近全屏时隐藏系统导航栏（半高时保持显示，dock 的 navigationBarsPadding
@@ -867,8 +862,8 @@ private fun PlayerPage(
         if (controller != null) {
             controller.systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            snapshotFlow { state.progress.value }.collect { p ->
-                if (p >= 0.9f) {
+            snapshotFlow { state.progress }.collect { p ->
+                if (p >= 1.9f) {
                     controller.hide(WindowInsetsCompat.Type.navigationBars())
                 } else {
                     controller.show(WindowInsetsCompat.Type.navigationBars())
@@ -886,11 +881,11 @@ private fun PlayerPage(
 
     Box(
         modifier = modifier
-            // 悬浮卡/全屏播放面：graphicsLayer 做平移+缩放（hit-test 随 transform），
-            // drawWithContent 裁剪圆角（随 progress 收小到 0）。二者都在 draw 阶段读 progress。
-            // 卡片本身是实心 surface（在 clip 内绘制），透不出底下内容，无需额外 scrim。
+            // 胶囊展开面：graphicsLayer 把全屏内容缩放+平移到壳矩形（胶囊→卡片→全屏），
+            // drawWithContent 裁剪圆角（卡片段保持胶囊圆角，全屏段收小到 0）。都在 draw 阶段读 progress。
+            // 壳是实心 surface（在 clip 内绘制），透不出底下内容，无需额外 scrim。
             .graphicsLayer {
-                val r = cardRect(state.progress.value)
+                val r = shellRect(state.progress)
                 val sx = (r.right - r.left) / fullWidthPx
                 val sy = (r.bottom - r.top) / fullHeightPx
                 scaleX = sx
@@ -900,9 +895,10 @@ private fun PlayerPage(
                 transformOrigin = TransformOrigin(0f, 0f)
             }
             .drawWithContent {
-                val p = state.progress.value
-                val expand = ((p - HALF_PROGRESS) / (1f - HALF_PROGRESS)).coerceIn(0f, 1f)
-                val radius = cornerPx * (1f - expand)
+                val p = state.progress
+                // 圆角：胶囊/卡片段（p∈[0,1]）保持胶囊观感 22dp；全屏段（p∈[1,2]）收小到 0。
+                val t1 = ((p - 1f) / 1f).coerceIn(0f, 1f)
+                val radius = capsuleCornerPx * (1f - t1)
                 clipPath(
                     path = Path().apply {
                         addRoundRect(
@@ -910,8 +906,7 @@ private fun PlayerPage(
                         )
                     },
                 ) {
-                    // 实心卡片背景（在 clip 内绘制，圆角裁剪）：半高时是悬浮实心卡，
-                    // 全屏时铺满，不再透出底下内容。
+                    // 实心卡片背景（在 clip 内绘制，圆角裁剪）：胶囊/卡片/全屏都铺满，透不出底下内容。
                     drawRect(color = cardColor)
                     this@drawWithContent.drawContent()
                 }
@@ -922,47 +917,14 @@ private fun PlayerPage(
                 interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                 indication = null,
             ) { }
-            // 竖向拖拽：卡片内上滑续开到全屏、下拉回 dock/收起。
-            .pointerInput(state, fullHeightPx) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    if (down.isConsumed) return@awaitEachGesture
-                    val id = down.id
-                    val slop = viewConfiguration.touchSlop
-                    val tracker = VelocityTracker()
-                    var axis = 0
-                    var vertCum = 0f
-                    var horizCum = 0f
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == id } ?: break
-                        if (change.isConsumed) break
-                        if (!change.pressed) {
-                            if (axis == 1) {
-                                state.settle(-tracker.calculateVelocity().y, fullHeightPx)
-                            }
-                            break
-                        }
-                        tracker.addPosition(change.uptimeMillis, change.position)
-                        val dx = change.position.x - change.previousPosition.x
-                        val dy = change.position.y - change.previousPosition.y
-                        if (axis == 0) {
-                            vertCum += dy
-                            horizCum += dx
-                            if (abs(vertCum) >= slop || abs(horizCum) >= slop) {
-                                axis = if (abs(vertCum) >= abs(horizCum)) 1 else 2
-                            }
-                        }
-                        when (axis) {
-                            1 -> {
-                                change.consume()
-                                state.dragTo(state.progress.value - vertCum / fullHeightPx)
-                            }
-                            2 -> break // 横向交给内容区切歌 detector
-                        }
-                    }
-                }
-            },
+            // 官方 anchoredDraggable：卡内上滑续开到全屏、下拉回 dock/收起。
+            // 松手吸附/甩动由 AnchoredDraggableState 原生处理（位置阈值 + 速度阈值）。
+            // reverseDirection=true：上滑（y 减小）→ offset 增大 → 展开。
+            .anchoredDraggable(
+                state.sheetState,
+                reverseDirection = true,
+                orientation = Orientation.Vertical,
+            ),
     ) {
         Column(
             Modifier
