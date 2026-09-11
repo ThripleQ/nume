@@ -329,7 +329,7 @@ fun PlayerDock(
     // 进度是高频状态：单独订阅，只有进度条随 250ms 轮询重组。
     val positionState = rememberPlayerPosition(player)
     val density = LocalDensity.current
-    val shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+    val shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp)
     val barHeight = 68.dp
     val actionHeight = 57.dp
 
@@ -365,7 +365,8 @@ fun PlayerDock(
                 fullHeightPx = fullHeightPx,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(barHeight),
+                    .height(barHeight)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
             )
 
             // 列表详情页操作行（滚动把头部按钮顶出视口时显示）。
@@ -374,6 +375,7 @@ fun PlayerDock(
                     Box(
                         Modifier
                             .fillMaxWidth()
+                            .padding(horizontal = 10.dp)
                             .height(1.dp)
                             .background(MaterialTheme.colorScheme.outlineVariant),
                     )
@@ -387,10 +389,11 @@ fun PlayerDock(
                 }
             }
 
-            // 分隔线 = 播放条与导航之间的分隔线。
+            // 分隔线 = 播放条与导航之间的分隔线（内缩与胶囊对齐）。
             Box(
                 Modifier
                     .fillMaxWidth()
+                    .padding(horizontal = 10.dp)
                     .height(1.dp)
                     .background(MaterialTheme.colorScheme.outlineVariant),
             )
@@ -440,10 +443,14 @@ private fun PlayerBar(
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
     val swipeThresholdPx = with(density) { SWIPE_THRESHOLD_DP.dp.toPx() }
+    val capsule = RoundedCornerShape(22.dp)
 
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .shadow(3.dp, capsule, clip = false)
+            .clip(capsule)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
             // 横滑切歌：独立 detector；竖向/点击见下方手动手势。
             .pointerInput(player) {
                 var accumulated = 0f
@@ -648,7 +655,7 @@ private fun NavRow(
     val pill = RoundedCornerShape(50)
     val haptics = LocalHapticFeedback.current
     Row(
-        modifier = modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+        modifier = modifier.padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         BottomTab.entries.forEach { tab ->
@@ -706,7 +713,7 @@ private fun ActionNavRow(
     val pill = RoundedCornerShape(50)
     val haptics = LocalHapticFeedback.current
     Row(
-        modifier = modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+        modifier = modifier.padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(

@@ -79,6 +79,10 @@ fun NumeApp() {
     val navController = rememberNavController()
     val context = LocalContext.current.applicationContext
     val player = remember { PlayerHolder.get(context) }
+    // Profile 的 ViewModel 提升到 Activity 作用域，Profile 页与 WebLogin 页共用同一实例。
+    // 登录成功 loadProfile 后 Profile 页自动刷新；且不依赖 Profile 是否在回退栈上
+    // （原先 WebLogin 里 getBackStackEntry<Profile>() 在当前不在 Profile 栈时会崩）。
+    val profileVm: ProfileViewModel = hiltViewModel()
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val destination = backStackEntry?.destination
@@ -162,15 +166,12 @@ fun NumeApp() {
                     onWebLogin = { navController.navigate(WebLogin) },
                     onOpenPlayer = ::openPlayer,
                     islandHeight = islandHeightDp,
+                    vm = profileVm,
                 )
             }
             composable<WebLogin> {
-                // 复用 Profile tab 的 ViewModel（同一 backstack entry 作用域）：
-                // WebLogin 页持有的是临时 entry 自己的实例，登录成功 loadProfile
-                // 只会更新临时实例，返回即销毁，Profile 页不会自动刷新。
-                val profileVm: ProfileViewModel = hiltViewModel(
-                    viewModelStoreOwner = navController.getBackStackEntry<Profile>(),
-                )
+                // 复用 Activity 作用域的 ProfileViewModel（与 Profile 页同一实例）：
+                // 登录成功 loadProfile 直接更新该实例，返回 Profile 页即已刷新。
                 WebLoginScreen(
                     onDone = { navController.popBackStack() },
                     onBack = { navController.popBackStack() },

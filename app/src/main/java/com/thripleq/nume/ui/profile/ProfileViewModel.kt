@@ -33,8 +33,8 @@ class ProfileViewModel @Inject constructor(
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
 
     init {
-        // tab 切换会销毁重建 ViewModel（saveState/restoreState），若 repo 里有上次数据
-        // 直接展示，不闪加载动画；随后后台静默刷新。
+        // VM 提升到 Activity 作用域（Profile 页与 WebLogin 页共用），跨 tab 常驻；
+        // 若 repo 里有上次数据直接展示，不闪加载动画；随后后台静默刷新。
         val cached = repository.cachedProfile
         if (cached != null) _uiState.value = ProfileUiState.LoggedIn(cached)
         refresh()

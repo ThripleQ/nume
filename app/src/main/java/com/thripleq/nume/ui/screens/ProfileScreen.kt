@@ -81,8 +81,8 @@ fun ProfileScreen(
     onWebLogin: () -> Unit,
     onOpenPlayer: () -> Unit = {},
     islandHeight: Float = 0f,
+    vm: ProfileViewModel = hiltViewModel(),
 ) {
-    val vm: ProfileViewModel = hiltViewModel()
     val state by vm.uiState.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
 
