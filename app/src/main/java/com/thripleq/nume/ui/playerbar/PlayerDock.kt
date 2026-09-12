@@ -114,8 +114,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 /** The top-level tabs shown in the docked capsule. */
 enum class BottomTab(val route: Any, val label: String, val icon: ImageVector) {
@@ -240,6 +242,12 @@ fun rememberPlayerPosition(
 /** 第一档（胶囊→卡片）的分裂点：progress ∈ [0,SPLIT] 是「扩展」，[SPLIT,1] 是「分裂」。 */
 private const val SPLIT = 0.5f
 
+/** 分裂段内部再分两拍：前一半「挤腰」（交界圆角涨大、两侧内收成腰），后一半「断开」（缝打开）。 */
+private const val SPLIT_SQUEEZE = 0.5f
+
+/** 挤腰峰值圆角（dp）：分裂前拍交界处圆角从 0 涨到它，形成内收的腰。 */
+private val WAIST_CORNER_DP = 36f
+
 /** spring 动画参数：打开时略带弹性，收起时干净无回弹。 */
 private val SPRING_OPEN = spring<Float>(
     dampingRatio = Spring.DampingRatioLowBouncy,
@@ -254,6 +262,17 @@ private val SPRING_FULL = spring<Float>(
     dampingRatio = Spring.DampingRatioNoBouncy,
     stiffness = Spring.StiffnessLow,
 )
+
+/** 分裂段进度 [0,1] 拆成两拍：挤腰 ([0,SPLIT_SQUEEZE]) 与 断开 ([SPLIT_SQUEEZE,1])。 */
+private fun splitSqueezeT(splitT: Float): Float = (splitT / SPLIT_SQUEEZE).coerceIn(0f, 1f)
+private fun splitBreakT(splitT: Float): Float =
+    ((splitT - SPLIT_SQUEEZE) / (1f - SPLIT_SQUEEZE)).coerceIn(0f, 1f)
+
+/** 挤腰用的圆形过渡：0 起涨、到 1、收 0（让腰先挤出来再松开，模拟细胞缢裂）。 */
+private fun splitWaistCurve(x: Float): Float {
+    val eased = x * x * (3f - 2f * x)
+    return if (x < 0.5f) eased else 1f - eased
+}
 
 /** 播放页「档位」：三档——收起(dock 胶囊) / 卡片 / 全屏。 */
 enum class PlayerSheet { Closed, Half, Full }
@@ -443,16 +462,20 @@ fun PlayerDock(
                 .fillMaxWidth()
                 .zIndex(if (isFullscreen) -1f else 1f)
                 .graphicsLayer {
-                    // dock 顶圆角随「扩展→分裂」连续变化：收起态 26dp 圆角；
-                    // 扩展段随气泡长出收平（26→0，母细胞顶边与气泡连成一线）；
-                    // 分裂段再从 0→26dp 逐渐长回，与气泡底边抬升同步——
-                    // 分裂不再「啪」地蹦出两个圆角缺口。
+                    // dock 顶圆角随「扩展→分裂→断开」连续变化：
+                    // 扩展段顶角收平（26→0，母细胞顶边与气泡连成一线）；
+                    // 分裂段「挤腰」时顶角涨到 36dp，两侧内收成腰（dock 位置不动，
+                    // 靠圆角涨大产生内收，不会把底部抬离屏幕底）；「断开」后落回 26dp。
                     val p = state.progress
                     val t0 = p.coerceIn(0f, 1f)
                     val extT = (t0 / SPLIT).coerceIn(0f, 1f)
                     val splitT = ((t0 - SPLIT) / (1f - SPLIT)).coerceIn(0f, 1f)
+                    val waistT = splitWaistCurve(splitT)
+                    val breakT = splitBreakT(splitT)
                     val cornerFrac = if (t0 < SPLIT) 1f - extT else splitT
-                    val cornerPx = with(density) { 26.dp.toPx() } * cornerFrac
+                    // 挤腰时圆角多涨一截（到 36dp），断开后落回 26dp。
+                    val cornerPx = with(density) { 26.dp.toPx() } * cornerFrac +
+                        with(density) { (WAIST_CORNER_DP - 26f).dp.toPx() } * waistT * breakT
                     this.shape = RoundedCornerShape(
                         topStart = with(density) { cornerPx.toDp() },
                         topEnd = with(density) { cornerPx.toDp() },
@@ -907,10 +930,18 @@ private fun PlayerPage(
         val t1 = (p - 1f).coerceIn(0f, 1f)
         val extT = (t0 / SPLIT).coerceIn(0f, 1f)
         val splitT = ((t0 - SPLIT) / (1f - SPLIT)).coerceIn(0f, 1f)
-        // dock 当前顶角半径：扩展段 26→0 收平，分裂段 0→26 长回（与 PlayerDock 同步）。
-        val dockCornerCur = if (t0 < SPLIT) dockCornerPx * (1f - extT) else dockCornerPx * splitT
+        val squeezeT = splitSqueezeT(splitT)
+        val breakT = splitBreakT(splitT)
+        val waistT = splitWaistCurve(splitT)
+        // dock 当前顶角半径：扩展段 26→0 收平，分裂段挤腰时涨到 36dp、断开后落回 26dp。
+        val dockCornerCur = if (t0 < SPLIT) {
+            dockCornerPx * (1f - extT)
+        } else {
+            dockCornerPx * splitT +
+                with(density) { (WAIST_CORNER_DP - 26f).dp.toPx() } * waistT * breakT
+        }
 
-        // 扩展：顶升起、底钉 dock 顶、左右贴满；分裂：顶钉状态栏、底升 edgePx、左右收进。
+        // 扩展：顶升起、底钉 dock 顶、左右贴满；分裂：顶钉状态栏，底边「挤腰→断开」。
         val top = if (t0 < SPLIT) {
             dockTopPx + (statusBarTopPx - dockTopPx) * extT
         } else {
@@ -920,8 +951,9 @@ private fun PlayerPage(
             // 扩展段：底边从背后包住 dock 当前圆角（圆角收平到 0 时恰为 dockTop）。
             dockTopPx + dockCornerCur
         } else {
-            // 分裂段：缝从 0 连续打开（dockTop → dockTop-gapPx），不等到后半段才裂开。
-            dockTopPx - gapPx * splitT
+            // 分裂段：挤腰时底边钉在 dockTop（两侧圆角涨大内收成腰、位置不动）；
+            // 断开后缝从 0 连续打开（→ dockTop-gapPx）。
+            dockTopPx - gapPx * breakT
         }
         val inset = edgePx * splitT
         val bubbleOrCard = Rect(inset, top, fullWidthPx - inset, bottom)
@@ -936,11 +968,15 @@ private fun PlayerPage(
     val splitT = ((t0 - SPLIT) / (1f - SPLIT)).coerceIn(0f, 1f)
     // 圆角：顶角全程保持圆（扩展段 26dp 与 dock 同形，分裂段渐到卡片 18dp）——绝不再收平
     // （之前错误地跟 dock 圆角联动，出现「先圆后平再圆」）。
-    // 底角：扩展段方角（与 dock 一体），分裂段长到 26dp（与 dock 顶角同半径）→ 分离处
-    // 两侧同时内收，形成「掐断」的腰，而不是两块平板对切。全屏档再略收。
+    // 底角：扩展段方角（与 dock 一体）；分裂段「挤腰」时涨到 36dp 让两侧内收成腰，
+    // 「断开」后落回 26dp（与 dock 顶角同半径）——不是两块平板对切。全屏档再略收。
     val cardCornerPx = with(density) { 18.dp.toPx() }
+    val waistCornerPx = with(density) { WAIST_CORNER_DP.dp.toPx() }
+    val squeezeT = splitSqueezeT(splitT)
+    val breakT = splitBreakT(splitT)
     val topCornerPx = dockCornerPx + (cardCornerPx - dockCornerPx) * splitT
-    val bottomCornerPx = dockCornerPx * splitT * (1f - 0.25f * t1)
+    val bottomCornerPx =
+        (waistCornerPx * squeezeT * (1f - breakT) + dockCornerPx * breakT) * (1f - 0.25f * t1)
     val shellShape = RoundedCornerShape(
         topStart = with(density) { topCornerPx.toDp() },
         topEnd = with(density) { topCornerPx.toDp() },
