@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,6 +31,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -53,6 +55,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -77,6 +80,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -92,6 +96,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
+import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -110,6 +115,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /** The top-level tabs shown in the docked capsule. */
 enum class BottomTab(val route: Any, val label: String, val icon: ImageVector) {
@@ -231,6 +237,9 @@ fun rememberPlayerPosition(
  *  两段式：p∈[0,1] 胶囊原位展开成悬浮卡（dock 保持可见）；
  *  p∈[1,2] 卡片放大盖满全屏（dock 淡出）。 */
 
+/** 第一档（胶囊→卡片）的分裂点：progress ∈ [0,SPLIT] 是「扩展」，[SPLIT,1] 是「分裂」。 */
+private const val SPLIT = 0.5f
+
 /** spring 动画参数：打开时略带弹性，收起时干净无回弹。 */
 private val SPRING_OPEN = spring<Float>(
     dampingRatio = Spring.DampingRatioLowBouncy,
@@ -239,6 +248,11 @@ private val SPRING_OPEN = spring<Float>(
 private val SPRING_CLOSE = spring<Float>(
     dampingRatio = Spring.DampingRatioNoBouncy,
     stiffness = Spring.StiffnessMedium,
+)
+/** 点击整页展开用慢速弹簧：让「胶囊→卡片→全屏」两段生长过程肉眼可见。 */
+private val SPRING_FULL = spring<Float>(
+    dampingRatio = Spring.DampingRatioNoBouncy,
+    stiffness = Spring.StiffnessLow,
 )
 
 /** 播放页「档位」：三档——收起(dock 胶囊) / 卡片 / 全屏。 */
@@ -287,13 +301,20 @@ class PlayerDockState internal constructor(
         animJob = scope.launch {
             if (!open) {
                 open = true
-                sheetState.snapTo(PlayerSheet.Closed)
+                // 等一帧，等壳（PlayerPage）组合、capsuleRect 就位（首帧=胶囊原位，
+                // 从当前位置续跑展开，而不是 snap 到 0 再展开——第一帧就是迷你条本身）。
+                withFrameNanos { }
+                sheetState.animateTo(
+                    if (toFull) PlayerSheet.Full else PlayerSheet.Half,
+                    if (toFull) SPRING_FULL else SPRING_CLOSE,
+                )
+            } else {
+                // 已打开：直接动画到目标档。
+                sheetState.animateTo(
+                    if (toFull) PlayerSheet.Full else PlayerSheet.Half,
+                    if (toFull) SPRING_FULL else SPRING_CLOSE,
+                )
             }
-            // 卡片用干净弹簧（无回弹过冲，卡到位即停）；全屏才用弹性。
-            sheetState.animateTo(
-                if (toFull) PlayerSheet.Full else PlayerSheet.Half,
-                if (toFull) SPRING_OPEN else SPRING_CLOSE,
-            )
         }
     }
 
@@ -358,14 +379,20 @@ fun PlayerDock(
     // 进度是高频状态：单独订阅，只有进度条随 250ms 轮询重组。
     val positionState = rememberPlayerPosition(player)
     val density = LocalDensity.current
-    val shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp)
+    // 是否已进入「卡片→全屏」档：决定 dock 与气泡的叠放层级。
+    // 只在跨过 p=1 时翻转，derivedStateOf 保证不因每帧 progress 变化而重组。
+    val isFullscreen by remember { derivedStateOf { state.progress > 1f } }
     val barHeight = 68.dp
     val actionHeight = 57.dp
 
-    // 全屏播放面需盖满整个窗口（含状态栏），供几何与手势换算共用同一分母。
-    val fullHeightPx = with(density) {
-        LocalConfiguration.current.screenHeightDp.dp.toPx()
-    }.coerceAtLeast(1f)
+    // 全屏播放面需盖满整个窗口（含状态栏/导航栏）：用根布局实测高度（edge-to-edge 下
+    // 才是真正的物理屏高），screenHeightDp 不含系统栏，会短一截、底部露背景。
+    var measuredHeightPx by remember { mutableFloatStateOf(0f) }
+    val fullHeightPx = if (measuredHeightPx > 0f) {
+        measuredHeightPx
+    } else {
+        with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx() }.coerceAtLeast(1f)
+    }
 
     // 总高上报：实际测量 dock 高度（含底部手势条 inset）。
     var dockHeightPx by remember { mutableIntStateOf(0) }
@@ -406,22 +433,36 @@ fun PlayerDock(
         }
     }
 
-    Box(Modifier.fillMaxSize()) {
-        // ---- 底部常驻 dock（画在全屏面下层，被它盖住；p≤半高时保持可见，>半高才淡出）----
+    Box(Modifier.fillMaxSize().onSizeChanged { measuredHeightPx = it.height.toFloat() }) {
+        // ---- 底部常驻 dock ----
+        // 展开/分裂档（p≤1）时 dock 叠在气泡之上：气泡底边向下包住 dock 的圆角，
+        // 背景基底不会从圆角漏出；全屏档（p>1）气泡反过来盖住 dock。
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .shadow(2.dp, shape, clip = false)
-                .clip(shape)
-                .background(MaterialTheme.colorScheme.surfaceContainer)
+                .zIndex(if (isFullscreen) -1f else 1f)
                 .graphicsLayer {
-                    // 胶囊展开：卡片档（p≤1）壳悬浮在 dock 顶之上，dock 完整可见；
-                    // 只有继续展开盖满全屏（p>1）才淡出 dock。
+                    // dock 顶圆角随「扩展→分裂」连续变化：收起态 26dp 圆角；
+                    // 扩展段随气泡长出收平（26→0，母细胞顶边与气泡连成一线）；
+                    // 分裂段再从 0→26dp 逐渐长回，与气泡底边抬升同步——
+                    // 分裂不再「啪」地蹦出两个圆角缺口。
                     val p = state.progress
-                    alpha = if (p <= 1f) 1f
-                    else (2f - p).coerceIn(0f, 1f)
+                    val t0 = p.coerceIn(0f, 1f)
+                    val extT = (t0 / SPLIT).coerceIn(0f, 1f)
+                    val splitT = ((t0 - SPLIT) / (1f - SPLIT)).coerceIn(0f, 1f)
+                    val cornerFrac = if (t0 < SPLIT) 1f - extT else splitT
+                    val cornerPx = with(density) { 26.dp.toPx() } * cornerFrac
+                    this.shape = RoundedCornerShape(
+                        topStart = with(density) { cornerPx.toDp() },
+                        topEnd = with(density) { cornerPx.toDp() },
+                    )
+                    clip = true
+                    shadowElevation = 2.dp.toPx() * (1f - t0)
+                    // 胶囊展开：卡片档（p≤1）dock 完整可见；只有继续展开盖满全屏（p>1）才淡出。
+                    alpha = if (p <= 1f) 1f else (2f - p).coerceIn(0f, 1f)
                 }
+                .background(MaterialTheme.colorScheme.surfaceContainer)
                 .onSizeChanged { dockHeightPx = it.height },
         ) {
             // 迷你播放条：点击进播放页；上滑 1:1 拉出播放页；左右滑切歌。
@@ -478,6 +519,7 @@ fun PlayerDock(
         }
 
         // ---- 全屏播放面（最上层）：open 才组合；p=0 整块沉在屏下（不可见/不可点）----
+        // 组合与否由锚点状态驱动：open=true 组合、收起动画跑完（尾帧落地）才卸载。
         if (state.open) {
             PlayerPage(
                 state = state,
@@ -507,7 +549,6 @@ private fun PlayerBar(
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
-    val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
     val swipeThresholdPx = with(density) { SWIPE_THRESHOLD_DP.dp.toPx() }
     val capsule = RoundedCornerShape(22.dp)
@@ -556,77 +597,95 @@ private fun PlayerBar(
                     },
                     onHorizontalDrag = { _, dragAmount -> accumulated += dragAmount },
                 )
-            }
+            },
+    ) {
+        PlayerBarContent(playerState, positionState, player)
+    }
+}
+
+/** 迷你条视觉本体（无手势）：真实迷你条与播放页壳低进度时共用的同一份布局，
+ *  保证「点击迷你条 → 壳展开」第一帧与迷你条原内容无缝衔接。
+ *  真实迷你条 [PlayerBar] = 手势 + 本内容；壳内副本 = 本内容（alpha 随进度淡出）。 */
+@Composable
+private fun PlayerBarContent(
+    playerState: PlayerUiState,
+    positionState: State<Long>,
+    player: Player,
+) {
+    val context = LocalContext.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
             .padding(horizontal = 12.dp),
     ) {
-        Row(
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .weight(1f),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            verticalAlignment = Alignment.CenterVertically,
+                .size(44.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surface),
         ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surface),
-            ) {
-                playerState.coverUrl?.let { uri ->
-                    val model = remember(uri) {
-                        ImageRequest.Builder(context)
-                            .data(Uri.parse(uri))
-                            .size(120)
-                            .build()
-                    }
-                    AsyncImage(
-                        model = model,
-                        contentDescription = playerState.title,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
+            playerState.coverUrl?.let { uri ->
+                val model = remember(uri) {
+                    ImageRequest.Builder(context)
+                        .data(Uri.parse(uri))
+                        .size(120)
+                        .build()
                 }
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = playerState.title.ifEmpty { "暂无播放" },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (playerState.hasTrack) MaterialTheme.colorScheme.onSurface
-                           else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = playerState.artist,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Spacer(Modifier.width(12.dp))
-            if (playerState.hasTrack) {
-                SpectrumPlaceholder()
-                Spacer(Modifier.width(8.dp))
-            }
-            IconButton(onClick = { PlayerHolder.togglePlay(player) }) {
-                Icon(
-                    imageVector = if (playerState.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = if (playerState.isPlaying) "暂停" else "播放",
-                    tint = MaterialTheme.colorScheme.onSurface,
+                AsyncImage(
+                    model = model,
+                    contentDescription = playerState.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
                 )
             }
         }
-
-        // 进度条：唯一读 positionState 的组合，250ms 轮询只让它重组。
-        if (playerState.hasTrack) {
-            MiniProgressBar(
-                state = playerState,
-                positionState = positionState,
-                modifier = Modifier.fillMaxWidth(),
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = playerState.title.ifEmpty { "暂无播放" },
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (playerState.hasTrack) MaterialTheme.colorScheme.onSurface
+                       else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = playerState.artist,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
+        Spacer(Modifier.width(12.dp))
+        if (playerState.hasTrack) {
+            SpectrumPlaceholder()
+            Spacer(Modifier.width(8.dp))
+        }
+        IconButton(onClick = { PlayerHolder.togglePlay(player) }) {
+            Icon(
+                imageVector = if (playerState.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                contentDescription = if (playerState.isPlaying) "暂停" else "播放",
+                tint = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+    }
+
+    // 进度条：唯一读 positionState 的组合，250ms 轮询只让它重组。
+    if (playerState.hasTrack) {
+        MiniProgressBar(
+            state = playerState,
+            positionState = positionState,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
     }
 }
 
@@ -803,11 +862,9 @@ private fun ActionNavRow(
     }
 }
 
-/** 全屏播放面（两段式）：p=0 沉在屏下；p∈(0,0.5] 悬浮卡片从 dock 顶升起
- *  （dock 保持可见可点）；p∈(0.5,1] 卡片放大盖满全屏（dock 淡出）。
- *  所有几何/圆角/压暗都在 draw 阶段（graphicsLayer + drawWithContent）读 progress，
- *  零重组；组合与否只由 [state.open] 决定（铁律）。
- */
+/** 全屏播放面：壳（surfaceContainerHighest + 顶 18dp 圆角 + 1dp 阴影）从迷你条胶囊
+ *  原位伸展成悬浮卡、再盖满全屏；壳顶停在状态栏下沿（与 ExpandableShell 面板一致）。
+ *  几何读 progress 在组合里（与 ExpandableShell 同构，壳随 progress 每帧布局）。 */
 @Composable
 private fun PlayerPage(
     state: PlayerDockState,
@@ -821,37 +878,85 @@ private fun PlayerPage(
     val swipeThresholdPx = with(density) { SWIPE_THRESHOLD_DP.dp.toPx() }
     val fullWidthPx = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
     val edgePx = with(density) { 10.dp.toPx() }
-    val capsuleCornerPx = with(density) { 22.dp.toPx() }
-    val cardColor = MaterialTheme.colorScheme.surfaceContainer
+    val gapPx = with(density) { 14.dp.toPx() }
+    val dockCornerPx = with(density) { 26.dp.toPx() }
+    val statusBarTopPx = with(density) { WindowInsets.statusBars.getTop(density).toFloat() }
 
-    // 三档矩形（px）：
-    //   capsule = 迷你条胶囊原位（窗口坐标，展开起点；无值时用兜底几何）；
-    //   card    = 悬浮卡（底距 dock 顶一个 edge、四周 10dp 边距）；
-    //   full    = 盖满全屏。
-    // progress ∈ [0,1]：capsule→card 插值；∈ (1,2]：card→full 插值。两段在 p=1 处连续。
-    fun lerpRect(a: androidx.compose.ui.geometry.Rect, b: androidx.compose.ui.geometry.Rect, t: Float) =
-        androidx.compose.ui.geometry.Rect(
-            a.left + (b.left - a.left) * t,
-            a.top + (b.top - a.top) * t,
-            a.right + (b.right - a.right) * t,
-            a.bottom + (b.bottom - a.bottom) * t,
-        )
+    fun lerpRect(a: Rect, b: Rect, t: Float) = Rect(
+        a.left + (b.left - a.left) * t,
+        a.top + (b.top - a.top) * t,
+        a.right + (b.right - a.right) * t,
+        a.bottom + (b.bottom - a.bottom) * t,
+    )
 
-    fun shellRect(p: Float): androidx.compose.ui.geometry.Rect {
-        val card = androidx.compose.ui.geometry.Rect(
-            edgePx, edgePx,
-            fullWidthPx - edgePx, fullHeightPx - dockHeightPx - edgePx,
-        )
-        val full = androidx.compose.ui.geometry.Rect(0f, 0f, fullWidthPx, fullHeightPx)
-        val capsule = state.capsuleRect ?: androidx.compose.ui.geometry.Rect(
-            edgePx, fullHeightPx - dockHeightPx + edgePx,
-            fullWidthPx - edgePx, fullHeightPx,
-        )
-        // 两段插值，p=1 处首尾相连（t0=1 时 card，t1=0 时也是 card）。
-        val t0 = (p / 1f).coerceIn(0f, 1f)          // [0,1] capsule→card
-        val t1 = ((p - 1f) / 1f).coerceIn(0f, 1f)   // [1,2] card→full
-        return lerpRect(lerpRect(capsule, card, t0), full, t1)
+    // 三档壳矩形（屏幕坐标，px）——「先扩展、再分裂」细胞分裂观感：
+    //   p∈[0,SPLIT] 扩展：气泡底钉 dock 顶、左右贴满屏，顶从 dock 顶充气升到卡片顶
+    //                    （状态栏下沿）。dock 内容（迷你条/导航）原位、画在壳下层；
+    //                    dock 顶角随气泡长出收平（26→0）→ 气泡与 dock 浑然一体。
+    //   p∈[SPLIT,1] 分裂：气泡在迷你条上方「掐断」——顶钉状态栏，底从 dock 顶升到
+    //                    「dock 顶上方 edgePx」，左右收进 edgePx、四角转圆 → 悬浮卡；
+    //                    下半 dock 顶角长回圆角（0→26）、露出原高。
+    //   p∈[1,2] 卡片→全屏：盖满含状态栏/导航栏。
+    //
+    //   **连续性保证**：分裂点（t0=SPLIT）上 dock 圆角=0、气泡底边=dockTop+edgePx，
+    //   扩展段末与分裂段初逐值相等，无跳变（分裂不再割裂）。
+    fun shellRect(p: Float): Rect {
+        val dockTopPx = fullHeightPx - dockHeightPx
+        val full = Rect(0f, 0f, fullWidthPx, fullHeightPx)
+        val t0 = p.coerceIn(0f, 1f)
+        val t1 = (p - 1f).coerceIn(0f, 1f)
+        val extT = (t0 / SPLIT).coerceIn(0f, 1f)
+        val splitT = ((t0 - SPLIT) / (1f - SPLIT)).coerceIn(0f, 1f)
+        // dock 当前顶角半径：扩展段 26→0 收平，分裂段 0→26 长回（与 PlayerDock 同步）。
+        val dockCornerCur = if (t0 < SPLIT) dockCornerPx * (1f - extT) else dockCornerPx * splitT
+
+        // 扩展：顶升起、底钉 dock 顶、左右贴满；分裂：顶钉状态栏、底升 edgePx、左右收进。
+        val top = if (t0 < SPLIT) {
+            dockTopPx + (statusBarTopPx - dockTopPx) * extT
+        } else {
+            statusBarTopPx
+        }
+        val bottom = if (t0 < SPLIT) {
+            // 扩展段：底边从背后包住 dock 当前圆角（圆角收平到 0 时恰为 dockTop）。
+            dockTopPx + dockCornerCur
+        } else {
+            // 分裂段：缝从 0 连续打开（dockTop → dockTop-gapPx），不等到后半段才裂开。
+            dockTopPx - gapPx * splitT
+        }
+        val inset = edgePx * splitT
+        val bubbleOrCard = Rect(inset, top, fullWidthPx - inset, bottom)
+
+        return lerpRect(bubbleOrCard, full, t1)
     }
+
+    val p = state.progress
+    val rect = shellRect(p)
+    val t0 = p.coerceIn(0f, 1f)
+    val t1 = (p - 1f).coerceIn(0f, 1f)
+    val splitT = ((t0 - SPLIT) / (1f - SPLIT)).coerceIn(0f, 1f)
+    // 圆角：顶角全程保持圆（扩展段 26dp 与 dock 同形，分裂段渐到卡片 18dp）——绝不再收平
+    // （之前错误地跟 dock 圆角联动，出现「先圆后平再圆」）。
+    // 底角：扩展段方角（与 dock 一体），分裂段长到 26dp（与 dock 顶角同半径）→ 分离处
+    // 两侧同时内收，形成「掐断」的腰，而不是两块平板对切。全屏档再略收。
+    val cardCornerPx = with(density) { 18.dp.toPx() }
+    val topCornerPx = dockCornerPx + (cardCornerPx - dockCornerPx) * splitT
+    val bottomCornerPx = dockCornerPx * splitT * (1f - 0.25f * t1)
+    val shellShape = RoundedCornerShape(
+        topStart = with(density) { topCornerPx.toDp() },
+        topEnd = with(density) { topCornerPx.toDp() },
+        bottomStart = with(density) { bottomCornerPx.toDp() },
+        bottomEnd = with(density) { bottomCornerPx.toDp() },
+    )
+    // 底色：扩展/分裂段 = dock 色（气泡就是 dock 长出来的），全屏段渐到 surfaceContainerHigh。
+    val shellColor = lerp(
+        MaterialTheme.colorScheme.surfaceContainer,
+        MaterialTheme.colorScheme.surfaceContainerHigh,
+        t1,
+    )
+    // 内容淡入：扩展段气泡长起来时内容浮现，分裂完成（p=1）已基本可见。
+    val contentAlpha = (p / SPLIT).coerceIn(0f, 1f)
+    // 顶部拉手/收起：分裂成卡后才浮现。
+    val headerAlpha = splitT
 
     // 沉浸：只在接近全屏时隐藏系统导航栏（半高时保持显示，dock 的 navigationBarsPadding
     // 布局稳定）；收起/回落到半高时恢复。用 snapshotFlow 轮询 progress，不引重组。
@@ -879,122 +984,93 @@ private fun PlayerPage(
         state.close()
     }
 
-    Box(
-        modifier = modifier
-            // 胶囊展开面：graphicsLayer 把全屏内容缩放+平移到壳矩形（胶囊→卡片→全屏），
-            // drawWithContent 裁剪圆角（卡片段保持胶囊圆角，全屏段收小到 0）。都在 draw 阶段读 progress。
-            // 壳是实心 surface（在 clip 内绘制），透不出底下内容，无需额外 scrim。
-            .graphicsLayer {
-                val r = shellRect(state.progress)
-                val sx = (r.right - r.left) / fullWidthPx
-                val sy = (r.bottom - r.top) / fullHeightPx
-                scaleX = sx
-                scaleY = sy
-                translationX = r.left
-                translationY = r.top
-                transformOrigin = TransformOrigin(0f, 0f)
-            }
-            .drawWithContent {
-                val p = state.progress
-                // 圆角：胶囊/卡片段（p∈[0,1]）保持胶囊观感 22dp；全屏段（p∈[1,2]）收小到 0。
-                val t1 = ((p - 1f) / 1f).coerceIn(0f, 1f)
-                val radius = capsuleCornerPx * (1f - t1)
-                clipPath(
-                    path = Path().apply {
-                        addRoundRect(
-                            RoundRect(0f, 0f, size.width, size.height, CornerRadius(radius)),
-                        )
-                    },
-                ) {
-                    // 实心卡片背景（在 clip 内绘制，圆角裁剪）：胶囊/卡片/全屏都铺满，透不出底下内容。
-                    drawRect(color = cardColor)
-                    this@drawWithContent.drawContent()
-                }
-            }
-            // 拦截触摸：只拦卡片实际区域（graphicsLayer transform 会一并变换 hit-test），
-            // 半高时 dock 区域不在此矩形内 → 仍可点。
-            .clickable(
-                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                indication = null,
-            ) { }
-            // 官方 anchoredDraggable：卡内上滑续开到全屏、下拉回 dock/收起。
-            // 松手吸附/甩动由 AnchoredDraggableState 原生处理（位置阈值 + 速度阈值）。
-            // reverseDirection=true：上滑（y 减小）→ offset 增大 → 展开。
-            .anchoredDraggable(
-                state.sheetState,
-                reverseDirection = true,
-                orientation = Orientation.Vertical,
-            ),
-    ) {
-        Column(
+    Box(modifier = modifier.fillMaxSize()) {
+        // 壳：显式宽高 + 平移（与 ExpandableShell 同构），随 progress 每帧布局。
+        // 阴影 + 圆角裁剪 + surfaceContainerHighest 底色，壳顶停在状态栏下沿。
+        Box(
             Modifier
-                .fillMaxSize()
-                .statusBarsPadding(),
+                .width(with(density) { (rect.right - rect.left).toDp() })
+                .height(with(density) { (rect.bottom - rect.top).toDp() })
+                .graphicsLayer {
+                    translationX = rect.left
+                    translationY = rect.top
+                    // 扩展段不投影（与 dock 浑然一体），分裂成卡后才浮起。
+                    shadowElevation = 1.dp.toPx() * splitT
+                    shape = shellShape
+                    clip = true
+                }
+                .background(shellColor)
+                // 拦截触摸：只拦壳实际区域；半高时 dock 区域不在此矩形内 → 仍可点。
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) { }
+                // 官方 anchoredDraggable：卡内上滑续开到全屏、下拉回 dock/收起。
+                // 松手吸附/甩动由 AnchoredDraggableState 原生处理（位置阈值 + 速度阈值）。
+                // reverseDirection=true：上滑（y 减小）→ offset 增大 → 展开。
+                .anchoredDraggable(
+                    state.sheetState,
+                    reverseDirection = true,
+                    orientation = Orientation.Vertical,
+                ),
         ) {
-            // 顶部：拉手 + 收起箭头。
+        // 壳内两层叠放（同 Box）：
+        //   1. 播放页内容（alpha = contentAlpha）：扩展段气泡长起来时浮现。
+        //   2. 顶部拉手/收起（alpha = contentAlpha）：分裂成卡/全屏时才有。
+        // 迷你条副本已删：壳只画「迷你条上方」的屏幕区，dock 里的真实迷你条
+        // 全程原位可见，不需要副本衔接（分裂缝由卡片底留 10dp 表达）。
+        Box(Modifier.fillMaxSize()) {
+            PlayerPageContent(
+                player = player,
+                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = contentAlpha },
+            )
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(24.dp)
-                    .padding(top = 6.dp),
-                contentAlignment = Alignment.TopCenter,
+                    .graphicsLayer { alpha = headerAlpha },
             ) {
+                // 顶部：拉手 + 收起箭头。
                 Box(
                     Modifier
-                        .size(width = 36.dp, height = 4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                        ),
-                )
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-            ) {
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = { doClose() }) {
-                    Icon(
-                        Icons.Filled.KeyboardArrowDown,
-                        contentDescription = "收起",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        .fillMaxWidth()
+                        .height(24.dp)
+                        .padding(top = 6.dp),
+                    contentAlignment = Alignment.TopCenter,
+                ) {
+                    Box(
+                        Modifier
+                            .size(width = 36.dp, height = 4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                            ),
                     )
                 }
-            }
-            // 内容区：支持横滑切歌（与迷你条一致）。
-            Box(
-                Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .pointerInput(player) {
-                        var accumulated = 0f
-                        detectHorizontalDragGestures(
-                            onDragStart = { accumulated = 0f },
-                            onDragEnd = {
-                                when {
-                                    accumulated <= -swipeThresholdPx -> {
-                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        PlayerHolder.skipNext(player)
-                                    }
-                                    accumulated >= swipeThresholdPx -> {
-                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        PlayerHolder.skipPrevious(player)
-                                    }
-                                }
-                            },
-                            onHorizontalDrag = { _, dragAmount -> accumulated += dragAmount },
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                ) {
+                    Spacer(Modifier.weight(1f))
+                    IconButton(onClick = { doClose() }) {
+                        Icon(
+                            Icons.Filled.KeyboardArrowDown,
+                            contentDescription = "收起",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                    },
-            ) {
-                PlayerPageContent(player)
+                    }
+                }
             }
+        }
         }
     }
 }
 
 /** 播放页主体：封面 / 标题 / slider / 控制。 */
 @Composable
-private fun PlayerPageContent(player: Player) {
+private fun PlayerPageContent(
+    player: Player,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current.applicationContext
 
     var seekPending by remember { mutableStateOf(false) }
@@ -1006,7 +1082,7 @@ private fun PlayerPageContent(player: Player) {
     val rangeMax = state.durationMs.toFloat().coerceAtLeast(1f)
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
