@@ -471,11 +471,13 @@ fun PlayerDock(
                     val extT = (t0 / SPLIT).coerceIn(0f, 1f)
                     val splitT = ((t0 - SPLIT) / (1f - SPLIT)).coerceIn(0f, 1f)
                     val waistT = splitWaistCurve(splitT)
-                    val breakT = splitBreakT(splitT)
                     val cornerFrac = if (t0 < SPLIT) 1f - extT else splitT
-                    // 挤腰时圆角多涨一截（到 36dp），断开后落回 26dp。
-                    val cornerPx = with(density) { 26.dp.toPx() } * cornerFrac +
-                        with(density) { (WAIST_CORNER_DP - 26f).dp.toPx() } * waistT * breakT
+                    // 挤腰：分裂段顶角随 splitT 长回（0→26），同时 waistT 在挤腰峰值叠一个
+                    // 36dp 的鼓包、断开后回落 —— 腰真正在挤腰段挤出来。
+                    // 峰值修正：splitT=0.5 时 26*0.5 + 增量*1 = 36 → 增量 = 36 - 26*0.5。
+                    val basePx = with(density) { 26.dp.toPx() }
+                    val bumpPx = with(density) { WAIST_CORNER_DP.dp.toPx() } - basePx * SPLIT_SQUEEZE
+                    val cornerPx = basePx * cornerFrac + bumpPx * waistT
                     this.shape = RoundedCornerShape(
                         topStart = with(density) { cornerPx.toDp() },
                         topEnd = with(density) { cornerPx.toDp() },
@@ -933,12 +935,13 @@ private fun PlayerPage(
         val squeezeT = splitSqueezeT(splitT)
         val breakT = splitBreakT(splitT)
         val waistT = splitWaistCurve(splitT)
-        // dock 当前顶角半径：扩展段 26→0 收平，分裂段挤腰时涨到 36dp、断开后落回 26dp。
+        // dock 当前顶角半径：扩展段 26→0 收平，分裂段随 splitT 长回 26dp 并叠挤腰鼓包
+        // （splitT=0.5 峰值 36dp，断开后落回 26dp）。
         val dockCornerCur = if (t0 < SPLIT) {
             dockCornerPx * (1f - extT)
         } else {
-            dockCornerPx * splitT +
-                with(density) { (WAIST_CORNER_DP - 26f).dp.toPx() } * waistT * breakT
+            val bumpPx = with(density) { WAIST_CORNER_DP.dp.toPx() } - dockCornerPx * SPLIT_SQUEEZE
+            dockCornerPx * splitT + bumpPx * waistT
         }
 
         // 扩展：顶升起、底钉 dock 顶、左右贴满；分裂：顶钉状态栏，底边「挤腰→断开」。
