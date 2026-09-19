@@ -248,19 +248,15 @@ private const val SPLIT_SQUEEZE = 0.5f
 /** 挤腰峰值圆角（dp）：分裂前拍交界处圆角从 0 涨到它，形成内收的腰。 */
 private val WAIST_CORNER_DP = 36f
 
-/** spring 动画参数：打开时略带弹性，收起时干净无回弹。 */
-private val SPRING_OPEN = spring<Float>(
-    dampingRatio = Spring.DampingRatioLowBouncy,
-    stiffness = Spring.StiffnessMedium,
-)
+/** spring 动画参数：收起干净无回弹；点击展开略带弹性（让两段生长有「活」感）。 */
 private val SPRING_CLOSE = spring<Float>(
     dampingRatio = Spring.DampingRatioNoBouncy,
     stiffness = Spring.StiffnessMedium,
 )
-/** 点击整页展开用慢速弹簧：让「胶囊→卡片→全屏」两段生长过程肉眼可见。 */
+/** 点击整页展开：低阻尼带一点弹性过冲 + 中低刚度，既有生长过程可见、又跟手不闷。 */
 private val SPRING_FULL = spring<Float>(
-    dampingRatio = Spring.DampingRatioNoBouncy,
-    stiffness = Spring.StiffnessLow,
+    dampingRatio = Spring.DampingRatioLowBouncy,
+    stiffness = Spring.StiffnessMediumLow,
 )
 
 /** 分裂段进度 [0,1] 拆成两拍：挤腰 ([0,SPLIT_SQUEEZE]) 与 断开 ([SPLIT_SQUEEZE,1])。 */
@@ -364,10 +360,11 @@ fun rememberPlayerDockState(): PlayerDockState {
             anchors = DraggableAnchors {
                 PlayerSheet.Closed at 0f
             },
-            positionalThreshold = { distance -> distance * 0.5f },
-            velocityThreshold = { 1200f },
+            positionalThreshold = { distance -> distance * 0.4f },
+            velocityThreshold = { 800f },
             snapAnimationSpec = SPRING_CLOSE,
-            decayAnimationSpec = exponentialDecay(),
+            // 甩动衰减：低摩擦让「甩」更顺滑跟手（滑得远、不顿）。
+            decayAnimationSpec = exponentialDecay(frictionMultiplier = 0.7f),
             confirmValueChange = { true },
         )
     }
@@ -398,6 +395,7 @@ fun PlayerDock(
     // 进度是高频状态：单独订阅，只有进度条随 250ms 轮询重组。
     val positionState = rememberPlayerPosition(player)
     val density = LocalDensity.current
+    val haptics = LocalHapticFeedback.current
     // 是否已进入「卡片→全屏」档：决定 dock 与气泡的叠放层级。
     // 只在跨过 p=1 时翻转，derivedStateOf 保证不因每帧 progress 变化而重组。
     val isFullscreen by remember { derivedStateOf { state.progress > 1f } }
@@ -449,6 +447,10 @@ fun PlayerDock(
     LaunchedEffect(state.sheetState) {
         snapshotFlow { state.sheetState.settledValue }.collect { v ->
             if (v == PlayerSheet.Closed) state.open = false
+            // 松手吸附到位：半高/全屏给一个轻 tick，让「滑档成功」有明确触感（跟手）。
+            if (v == PlayerSheet.Half || v == PlayerSheet.Full) {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            }
         }
     }
 
