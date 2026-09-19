@@ -244,6 +244,12 @@ fun rememberPlayerPosition(
 /** 第一档（胶囊→卡片）的分裂点：progress ∈ [0,SPLIT] 是「扩展」，[SPLIT,1] 是「分裂」。 */
 private const val SPLIT = 0.5f
 
+/** 卡片档吸附进度：分裂完成后壳顶继续线性升高到该进度才停 —— 卡片占屏约 2/3、
+ *  高度足够装下封面+滑块+控制整组内容（此前卡片只有半屏高，内容溢出被裁、比例失调）。
+ *  全屏固定 2；卡片→全屏的形变（贴边/收角/变色/dock淡出）全部在 [HALF_ANCHOR_P, 2] 内插值，
+ *  壳顶仍全程随手指线性升降（跟手不变）、一行程直达全屏（行程不变）。 */
+private const val HALF_ANCHOR_P = 1.35f
+
 /** 分裂段内部再分两拍：前一半「挤腰」（交界圆角涨大、两侧内收成腰），后一半「断开」（缝打开）。 */
 private const val SPLIT_SQUEEZE = 0.5f
 
@@ -280,7 +286,7 @@ enum class PlayerSheet { Closed, Half, Full }
  *
  * 锚点像素 = 胶囊展开进度（像素），几何是「胶囊 → 悬浮卡 → 全屏」两段 lerp：
  * - [PlayerSheet.Closed] = 0          → 壳收在迷你条胶囊原位
- * - [PlayerSheet.Half]   = travelPx   → 壳展开成悬浮卡（progress == 1）
+ * - [PlayerSheet.Half]   = HALF_ANCHOR_P*travelPx → 壳展开成悬浮卡（progress == 1.35，高卡装得下全部内容）
  * - [PlayerSheet.Full]   = 2*travelPx → 壳盖满全屏（progress == 2）
  * [progress] = offset / travelPx ∈ [0,2]，在 draw 阶段读，不触发重组。
  *
@@ -425,13 +431,14 @@ fun PlayerDock(
     val travelPx = ((fullHeightPx - dockHeightPx) / 2f).coerceAtLeast(1f)
 
     // 把行程同步进 state，并把三档锚点像素注册给 AnchoredDraggableState（拖动/吸附据此 1:1）。
-    // 锚点 = 胶囊展开进度（px）：Closed=0、Half=travelPx（展开成卡片）、Full=2*travelPx（盖满全屏）。
+    // 锚点 = 胶囊展开进度（px）：Closed=0、Half=HALF_ANCHOR_P*travelPx（高卡片，内容装得下）、
+    // Full=2*travelPx（盖满全屏）。
     LaunchedEffect(travelPx) {
         state.travelPx = travelPx
         state.sheetState.updateAnchors(
             DraggableAnchors {
                 PlayerSheet.Closed at 0f
-                PlayerSheet.Half at travelPx
+                PlayerSheet.Half at HALF_ANCHOR_P * travelPx
                 PlayerSheet.Full at 2f * travelPx
             },
             newTarget = state.sheetState.currentValue,
@@ -487,8 +494,9 @@ fun PlayerDock(
                     )
                     clip = true
                     shadowElevation = 2.dp.toPx() * (1f - t0)
-                    // 胶囊展开：卡片档（p≤1）dock 完整可见；只有继续展开盖满全屏（p>1）才淡出。
-                    alpha = if (p <= 1f) 1f else (2f - p).coerceIn(0f, 1f)
+                    // 卡片档（p≤HALF_ANCHOR_P）dock 完整可见；只有从卡片继续拉向全屏才淡出。
+                    alpha = if (p <= HALF_ANCHOR_P) 1f
+                    else ((2f - p) / (2f - HALF_ANCHOR_P)).coerceIn(0f, 1f)
                 }
                 .background(MaterialTheme.colorScheme.surfaceContainer)
                 .onSizeChanged { dockHeightPx = it.height },
@@ -924,7 +932,7 @@ private fun PlayerPage(
     //   p∈[SPLIT,1] 分裂：气泡在迷你条上方「掐断」——顶钉状态栏，底从 dock 顶升到
     //                    「dock 顶上方 edgePx」，左右收进 edgePx、四角转圆 → 悬浮卡；
     //                    下半 dock 顶角长回圆角（0→26）、露出原高。
-    //   p∈[1,2] 卡片→全屏：盖满含状态栏/导航栏。
+    //   p∈[HALF_ANCHOR_P,2] 卡片→全屏：盖满含状态栏/导航栏（卡片档先稳定到 1.35）。
     //
     //   **连续性保证**：分裂点（t0=SPLIT）上 dock 圆角=0、气泡底边=dockTop+edgePx，
     //   扩展段末与分裂段初逐值相等，无跳变（分裂不再割裂）。
@@ -932,7 +940,9 @@ private fun PlayerPage(
         val dockTopPx = fullHeightPx - dockHeightPx
         val full = Rect(0f, 0f, fullWidthPx, fullHeightPx)
         val t0 = p.coerceIn(0f, 1f)
-        val t1 = (p - 1f).coerceIn(0f, 1f)
+        // 卡片→全屏的插值在 [HALF_ANCHOR_P, 2] 段内进行：卡片档先稳定停留到 1.35，
+        // 再继续拉才贴满屏（此前 p>1 就开始盖满，卡片档形同虚设、高度只有半屏）。
+        val t1 = ((p - HALF_ANCHOR_P) / (2f - HALF_ANCHOR_P)).coerceIn(0f, 1f)
         val extT = (t0 / SPLIT).coerceIn(0f, 1f)
         val splitT = ((t0 - SPLIT) / (1f - SPLIT)).coerceIn(0f, 1f)
         val squeezeT = splitSqueezeT(splitT)
@@ -968,19 +978,18 @@ private fun PlayerPage(
     val p = state.progress
     val rect = shellRect(p)
     val t0 = p.coerceIn(0f, 1f)
-    val t1 = (p - 1f).coerceIn(0f, 1f)
+    val t1 = ((p - HALF_ANCHOR_P) / (2f - HALF_ANCHOR_P)).coerceIn(0f, 1f)
     val splitT = ((t0 - SPLIT) / (1f - SPLIT)).coerceIn(0f, 1f)
-    // 圆角：顶角全程保持圆（扩展段 26dp 与 dock 同形，分裂段渐到卡片 18dp）——绝不再收平
-    // （之前错误地跟 dock 圆角联动，出现「先圆后平再圆」）。
+    // 圆角统一（修复 18/26/19.5 混用）：壳四角与 dock 同族、全部落在 26dp——
+    // 顶角全程 26dp（与 dock 同形，不收平、不换尺寸）；
     // 底角：扩展段方角（与 dock 一体）；分裂段「挤腰」时涨到 36dp 让两侧内收成腰，
-    // 「断开」后落回 26dp（与 dock 顶角同半径）——不是两块平板对切。全屏档再略收。
-    val cardCornerPx = with(density) { 18.dp.toPx() }
+    // 「断开」后落回 26dp（与 dock 顶角同半径）——不是两块平板对切。
     val waistCornerPx = with(density) { WAIST_CORNER_DP.dp.toPx() }
     val squeezeT = splitSqueezeT(splitT)
     val breakT = splitBreakT(splitT)
-    val topCornerPx = dockCornerPx + (cardCornerPx - dockCornerPx) * splitT
+    val topCornerPx = dockCornerPx
     val bottomCornerPx =
-        (waistCornerPx * squeezeT * (1f - breakT) + dockCornerPx * breakT) * (1f - 0.25f * t1)
+        waistCornerPx * squeezeT * (1f - breakT) + dockCornerPx * breakT
     val shellShape = RoundedCornerShape(
         topStart = with(density) { topCornerPx.toDp() },
         topEnd = with(density) { topCornerPx.toDp() },
@@ -1063,6 +1072,7 @@ private fun PlayerPage(
             PlayerPageContent(
                 player = player,
                 contentProgress = (p / 2f).coerceIn(0f, 1f),
+                shellHeightPx = rect.height,
                 modifier = Modifier.fillMaxSize().graphicsLayer { alpha = contentAlpha },
             )
             Box(
@@ -1111,6 +1121,7 @@ private fun PlayerPage(
 private fun PlayerPageContent(
     player: Player,
     contentProgress: Float,
+    shellHeightPx: Float,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current.applicationContext
@@ -1126,7 +1137,13 @@ private fun PlayerPageContent(
     // 内容随壳展开度调整缩放/比例/排列：壳矮（卡片档）紧凑收敛、全屏舒展放大，
     // 元素结构不变，只按壳实际升到多高插值尺寸与间距，与壳比例保持协调。
     val sc = contentProgress.coerceIn(0f, 1f)
-    val coverDim = androidx.compose.ui.unit.lerp(180.dp, 280.dp, sc)
+    // 封面双重钳制：随进度 180→280dp，同时不超过壳实际高度的 40% ——
+    // 矮壳/卡片档绝不溢出被裁（此前半屏卡片装全屏内容就是被裁的根因）。
+    val density = LocalDensity.current
+    val coverDim = minOf(
+        androidx.compose.ui.unit.lerp(180.dp, 280.dp, sc),
+        with(density) { (shellHeightPx * 0.4f).toDp() },
+    )
     val coverCorner = androidx.compose.ui.unit.lerp(12.dp, 16.dp, sc)
     val titleGap = androidx.compose.ui.unit.lerp(16.dp, 40.dp, sc)
     val ctrlGap = androidx.compose.ui.unit.lerp(8.dp, 16.dp, sc)
