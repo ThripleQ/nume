@@ -468,13 +468,11 @@ fun PlayerDock(
                     // 分裂段「挤腰」时顶角涨到 36dp，两侧内收成腰（dock 位置不动，
                     // 靠圆角涨大产生内收，不会把底部抬离屏幕底）；「断开」后落回 26dp。
                     val p = state.progress
-                    // r = 壳顶从 dock 顶升到屏顶的完成度(0..1)，所有形态以「壳实际升到多高」为
-                    // 时间轴（而非原始 progress），保证形态与壳位置同步、不随 travelPx 提前。
-                    val r = (p / 2f).coerceIn(0f, 1f)
-                    val extT = (r / SPLIT).coerceIn(0f, 1f)
-                    val splitT = ((r - SPLIT) / (1f - SPLIT)).coerceIn(0f, 1f)
+                    val t0 = p.coerceIn(0f, 1f)
+                    val extT = (t0 / SPLIT).coerceIn(0f, 1f)
+                    val splitT = ((t0 - SPLIT) / (1f - SPLIT)).coerceIn(0f, 1f)
                     val waistT = splitWaistCurve(splitT)
-                    val cornerFrac = if (r < SPLIT) 1f - extT else splitT
+                    val cornerFrac = if (t0 < SPLIT) 1f - extT else splitT
                     // 挤腰：分裂段顶角随 splitT 长回（0→26），同时 waistT 在挤腰峰值叠一个
                     // 36dp 的鼓包、断开后回落 —— 腰真正在挤腰段挤出来。
                     // 峰值修正：splitT=0.5 时 26*0.5 + 增量*1 = 36 → 增量 = 36 - 26*0.5。
@@ -486,9 +484,9 @@ fun PlayerDock(
                         topEnd = with(density) { cornerPx.toDp() },
                     )
                     clip = true
-                    shadowElevation = 2.dp.toPx() * (1f - r)
-                    // 胶囊展开：卡片档（壳升到屏中，r≤0.5）dock 完整可见；继续盖满全屏才淡出。
-                    alpha = if (r <= 0.5f) 1f else (2f - 2f * r).coerceIn(0f, 1f)
+                    shadowElevation = 2.dp.toPx() * (1f - t0)
+                    // 胶囊展开：卡片档（p≤1）dock 完整可见；只有继续展开盖满全屏（p>1）才淡出。
+                    alpha = if (p <= 1f) 1f else (2f - p).coerceIn(0f, 1f)
                 }
                 .background(MaterialTheme.colorScheme.surfaceContainer)
                 .onSizeChanged { dockHeightPx = it.height },
@@ -917,36 +915,41 @@ private fun PlayerPage(
         a.bottom + (b.bottom - a.bottom) * t,
     )
 
-    // 三档壳矩形（屏幕坐标，px）——「先扩展、再分裂」细胞分裂观感。时间轴用 r=壳顶上升
-    // 完成度(0..1)，与壳实际高度同步（拖动多少、形态跟到哪，不随 travelPx 提前）。
-    //   r∈[0,SPLIT] 扩展：气泡底钉 dock 顶、左右贴满屏，顶从 dock 顶持续线性上升；
-    //                dock 顶角随气泡长出收平（26→0）→ 气泡与 dock 浑然一体。
-    //   r∈[SPLIT,1] 分裂：继续上升的同时「掐断」——左右收进 edgePx、底断开出缝反
-    //                「dock 顶 - gap」→ 悬浮卡；dock 顶角长回圆角、露出。
-    //   分裂段末（r→1）经 splitT 插值盖满含状态栏/导航栏（全屏）。
+    // 三档壳矩形（屏幕坐标，px）——「先扩展、再分裂」细胞分裂观感：
+    //   p∈[0,SPLIT] 扩展：气泡底钉 dock 顶、左右贴满屏，顶从 dock 顶充气升到卡片顶
+    //                    （状态栏下沿）。dock 内容（迷你条/导航）原位、画在壳下层；
+    //                    dock 顶角随气泡长出收平（26→0）→ 气泡与 dock 浑然一体。
+    //   p∈[SPLIT,1] 分裂：气泡在迷你条上方「掐断」——顶钉状态栏，底从 dock 顶升到
+    //                    「dock 顶上方 edgePx」，左右收进 edgePx、四角转圆 → 悬浮卡；
+    //                    下半 dock 顶角长回圆角（0→26）、露出原高。
+    //   p∈[1,2] 卡片→全屏：盖满含状态栏/导航栏。
+    //
+    //   **连续性保证**：分裂点（t0=SPLIT）上 dock 圆角=0、气泡底边=dockTop+edgePx，
+    //   扩展段末与分裂段初逐值相等，无跳变（分裂不再割裂）。
     fun shellRect(p: Float): Rect {
         val dockTopPx = fullHeightPx - dockHeightPx
         val full = Rect(0f, 0f, fullWidthPx, fullHeightPx)
-        val r = (p / 2f).coerceIn(0f, 1f)
-        val extT = (r / SPLIT).coerceIn(0f, 1f)
-        val splitT = ((r - SPLIT) / (1f - SPLIT)).coerceIn(0f, 1f)
+        val t0 = p.coerceIn(0f, 1f)
+        val t1 = (p - 1f).coerceIn(0f, 1f)
+        val extT = (t0 / SPLIT).coerceIn(0f, 1f)
+        val splitT = ((t0 - SPLIT) / (1f - SPLIT)).coerceIn(0f, 1f)
         val squeezeT = splitSqueezeT(splitT)
         val breakT = splitBreakT(splitT)
         val waistT = splitWaistCurve(splitT)
         // dock 当前顶角半径：扩展段 26→0 收平，分裂段随 splitT 长回 26dp 并叠挤腰鼓包
         // （splitT=0.5 峰值 36dp，断开后落回 26dp）。
-        val dockCornerCur = if (r < SPLIT) {
+        val dockCornerCur = if (t0 < SPLIT) {
             dockCornerPx * (1f - extT)
         } else {
             val bumpPx = with(density) { WAIST_CORNER_DP.dp.toPx() } - dockCornerPx * SPLIT_SQUEEZE
             dockCornerPx * splitT + bumpPx * waistT
         }
 
-        // 顶全程随 offset 线性升降（**跟手关键**）：r=0→dock 顶，r=1→屏顶。不再让分裂段把
-        // 顶"钉在状态栏不动"——那是之前感觉不跟手的根因：拖一截壳顶却不升。细胞分裂的形态
-        // （左右内收/底缝/圆角、dock 角联动）全部保留，叠加在上升之上。
+        // 顶全程随 offset 线性升降（**跟手关键**）：p=0→dock 顶，p=1→屏中，p=2→屏顶。
+        // 不再让分裂段把顶"钉在状态栏不动"——那正是之前感觉不跟手的根因：拖一截壳顶却不升。
+        // 细胞分裂的形态（左右内收/底缝/圆角、dock 角联动）全部保留，叠加在上升之上。
         val top = dockTopPx * (1f - p / 2f)
-        val bottom = if (r < SPLIT) {
+        val bottom = if (t0 < SPLIT) {
             // 扩展段：底边从背后包住 dock 当前圆角（圆角收平到 0 时恰为 dockTop）。
             dockTopPx + dockCornerCur
         } else {
@@ -957,15 +960,14 @@ private fun PlayerPage(
         val inset = edgePx * splitT
         val bubbleOrCard = Rect(inset, top, fullWidthPx - inset, bottom)
 
-        // 分裂段末（splitT 0→1）从悬浮卡平滑插值到盖满全屏。
-        return lerpRect(bubbleOrCard, full, splitT)
+        return lerpRect(bubbleOrCard, full, t1)
     }
 
     val p = state.progress
     val rect = shellRect(p)
-    // r = 壳顶上升完成度(0..1)，壳圆角/内容与壳实际高度同步，不随 travelPx 提前。
-    val r = (p / 2f).coerceIn(0f, 1f)
-    val splitT = ((r - SPLIT) / (1f - SPLIT)).coerceIn(0f, 1f)
+    val t0 = p.coerceIn(0f, 1f)
+    val t1 = (p - 1f).coerceIn(0f, 1f)
+    val splitT = ((t0 - SPLIT) / (1f - SPLIT)).coerceIn(0f, 1f)
     // 圆角：顶角全程保持圆（扩展段 26dp 与 dock 同形，分裂段渐到卡片 18dp）——绝不再收平
     // （之前错误地跟 dock 圆角联动，出现「先圆后平再圆」）。
     // 底角：扩展段方角（与 dock 一体）；分裂段「挤腰」时涨到 36dp 让两侧内收成腰，
@@ -976,7 +978,7 @@ private fun PlayerPage(
     val breakT = splitBreakT(splitT)
     val topCornerPx = dockCornerPx + (cardCornerPx - dockCornerPx) * splitT
     val bottomCornerPx =
-        (waistCornerPx * squeezeT * (1f - breakT) + dockCornerPx * breakT) * (1f - 0.25f * splitT)
+        (waistCornerPx * squeezeT * (1f - breakT) + dockCornerPx * breakT) * (1f - 0.25f * t1)
     val shellShape = RoundedCornerShape(
         topStart = with(density) { topCornerPx.toDp() },
         topEnd = with(density) { topCornerPx.toDp() },
@@ -987,11 +989,10 @@ private fun PlayerPage(
     val shellColor = lerp(
         MaterialTheme.colorScheme.surfaceContainer,
         MaterialTheme.colorScheme.surfaceContainerHigh,
-        splitT,
+        t1,
     )
-    // 内容淡入：壳顶升过 40% 才开始浮现、升满前全显（smoothstep）——避免壳还矮时内容就挤入。
-    val contentT = ((r - 0.4f) / 0.6f).coerceIn(0f, 1f)
-    val contentAlpha = contentT * contentT * (3f - 2f * contentT)
+    // 内容淡入：扩展段气泡长起来时内容浮现，分裂完成（p=1）已基本可见。
+    val contentAlpha = (p / SPLIT).coerceIn(0f, 1f)
     // 顶部拉手/收起：分裂成卡后才浮现。
     val headerAlpha = splitT
 
