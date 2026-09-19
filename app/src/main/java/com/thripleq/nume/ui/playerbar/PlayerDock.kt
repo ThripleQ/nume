@@ -417,11 +417,10 @@ fun PlayerDock(
         if (dockHeightPx > 0) onIslandHeightChange(with(density) { dockHeightPx.toDp() }.value)
     }
 
-    // 手势 1:1 行程：手指从迷你条顶拉到全屏顶的可见距离。
-    // 整屏高（2400px）里 dock 占了 ~390px，若拿整屏高做分母，手指要走满一屏 progress 才到 1，
-    // 实际只能走 ~2000px → 拉满手卡片才升一小截 → 感觉"反的/费劲"。
-    // 锚点像素以此为准：Closed=0、Half=travelPx*0.5、Full=travelPx。
-    val travelPx = (fullHeightPx - dockHeightPx).coerceAtLeast(1f)
+    // 手势总行程 = 一个 progress 档位的位移。全屏锚点 = 2*travelPx = 屏高-dock 高 =
+    // 手指从 dock 顶一路拉到屏顶的可见距离 —— **一行程直达全屏**，跟手不费劲，
+    // 不再像以前那样全屏锚点在两倍行程、手指拖满一屏都够不到就弹回。
+    val travelPx = ((fullHeightPx - dockHeightPx) / 2f).coerceAtLeast(1f)
 
     // 把行程同步进 state，并把三档锚点像素注册给 AnchoredDraggableState（拖动/吸附据此 1:1）。
     // 锚点 = 胶囊展开进度（px）：Closed=0、Half=travelPx（展开成卡片）、Full=2*travelPx（盖满全屏）。
@@ -946,12 +945,10 @@ private fun PlayerPage(
             dockCornerPx * splitT + bumpPx * waistT
         }
 
-        // 扩展：顶升起、底钉 dock 顶、左右贴满；分裂：顶钉状态栏，底边「挤腰→断开」。
-        val top = if (t0 < SPLIT) {
-            dockTopPx + (statusBarTopPx - dockTopPx) * extT
-        } else {
-            statusBarTopPx
-        }
+        // 顶全程随 offset 线性升降（**跟手关键**）：p=0→dock 顶，p=1→屏中，p=2→屏顶。
+        // 不再让分裂段把顶"钉在状态栏不动"——那正是之前感觉不跟手的根因：拖一截壳顶却不升。
+        // 细胞分裂的形态（左右内收/底缝/圆角、dock 角联动）全部保留，叠加在上升之上。
+        val top = dockTopPx * (1f - p / 2f)
         val bottom = if (t0 < SPLIT) {
             // 扩展段：底边从背后包住 dock 当前圆角（圆角收平到 0 时恰为 dockTop）。
             dockTopPx + dockCornerCur
