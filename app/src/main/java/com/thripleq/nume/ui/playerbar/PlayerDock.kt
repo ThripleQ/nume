@@ -95,6 +95,8 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
@@ -1060,6 +1062,7 @@ private fun PlayerPage(
         Box(Modifier.fillMaxSize()) {
             PlayerPageContent(
                 player = player,
+                contentProgress = (p / 2f).coerceIn(0f, 1f),
                 modifier = Modifier.fillMaxSize().graphicsLayer { alpha = contentAlpha },
             )
             Box(
@@ -1107,6 +1110,7 @@ private fun PlayerPage(
 @Composable
 private fun PlayerPageContent(
     player: Player,
+    contentProgress: Float,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current.applicationContext
@@ -1119,10 +1123,22 @@ private fun PlayerPageContent(
 
     val rangeMax = state.durationMs.toFloat().coerceAtLeast(1f)
 
+    // 内容随壳展开度调整缩放/比例/排列：壳矮（卡片档）紧凑收敛、全屏舒展放大，
+    // 元素结构不变，只按壳实际升到多高插值尺寸与间距，与壳比例保持协调。
+    val sc = contentProgress.coerceIn(0f, 1f)
+    val coverDim = androidx.compose.ui.unit.lerp(180.dp, 280.dp, sc)
+    val coverCorner = androidx.compose.ui.unit.lerp(12.dp, 16.dp, sc)
+    val titleGap = androidx.compose.ui.unit.lerp(16.dp, 40.dp, sc)
+    val ctrlGap = androidx.compose.ui.unit.lerp(8.dp, 16.dp, sc)
+    val playBtnDim = androidx.compose.ui.unit.lerp(36.dp, 48.dp, sc)
+    val sideBtnDim = androidx.compose.ui.unit.lerp(24.dp, 32.dp, sc)
+    val bottomGap = androidx.compose.ui.unit.lerp(12.dp, 24.dp, sc)
+    val titleFont = androidx.compose.ui.unit.lerp(20.sp, 24.sp, sc)
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 28.dp),
+            .padding(start = 28.dp, end = 28.dp, top = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -1131,8 +1147,8 @@ private fun PlayerPageContent(
         // Cover
         Box(
             modifier = Modifier
-                .size(280.dp)
-                .clip(RoundedCornerShape(16.dp))
+                .size(coverDim)
+                .clip(RoundedCornerShape(coverCorner))
                 .background(MaterialTheme.colorScheme.surface),
         ) {
             state.coverUrl?.let { uri ->
@@ -1148,12 +1164,12 @@ private fun PlayerPageContent(
             }
         }
 
-        Spacer(Modifier.height(40.dp))
+        Spacer(Modifier.height(titleGap))
 
         // Track / metadata
         Text(
             text = state.title.ifEmpty { "暂无播放" },
-            style = MaterialTheme.typography.headlineSmall,
+            style = MaterialTheme.typography.headlineSmall.copy(fontSize = titleFont),
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -1202,7 +1218,7 @@ private fun PlayerPageContent(
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(ctrlGap))
 
         // Transport controls
         Row(
@@ -1215,7 +1231,7 @@ private fun PlayerPageContent(
                     Icons.Filled.SkipPrevious,
                     contentDescription = "上一首",
                     tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(32.dp),
+                    modifier = Modifier.size(sideBtnDim),
                 )
             }
             IconButton(onClick = { PlayerHolder.togglePlay(player) }) {
@@ -1227,7 +1243,7 @@ private fun PlayerPageContent(
                     },
                     contentDescription = if (state.isPlaying) "暂停" else "播放",
                     tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(playBtnDim),
                 )
             }
             IconButton(onClick = { PlayerHolder.skipNext(player) }) {
@@ -1235,7 +1251,7 @@ private fun PlayerPageContent(
                     Icons.Filled.SkipNext,
                     contentDescription = "下一首",
                     tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(32.dp),
+                    modifier = Modifier.size(sideBtnDim),
                 )
             }
         }
@@ -1251,7 +1267,7 @@ private fun PlayerPageContent(
             )
         }
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(bottomGap))
         Spacer(Modifier.weight(1f))
     }
 }
