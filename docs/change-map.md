@@ -11,6 +11,8 @@
 | 我想… | 去改 | 备注 |
 |---|---|---|
 | 改某个页面的文字 / 颜色 / 间距 / 按钮 | `ui/screens/<屏>Screen.kt` | 改界面基本只动这一个文件 |
+| 改迷你条 / 播放页（含手势、两段式展开） | `ui/playerbar/PlayerDock.kt` | dock + 全屏播放页合体，同一文件 |
+| 改「胶囊→全屏」通用伸展壳的动画 / 尾帧 | `ui/components/ExpandableShell.kt` | 我的页喜欢的音乐等复用 |
 | 改全 app 的配色 / 明暗主题 | `ui/theme/Color.kt`、`ui/theme/Theme.kt` | 换品牌色、跟系统昼夜 |
 | 改字号、字重、字体 | `ui/theme/Type.kt` | |
 | 改底部导航胶囊：加删 tab、换图标、改顺序 | `NumeApp.kt` | 导航目的地也集中在这一个文件 |
@@ -21,8 +23,9 @@
 | 我想… | 去改 |
 |---|---|
 | 排行榜页显示哪些榜单、什么顺序 | `ui/library/LibraryViewModel.kt` |
-| 单榜曲目列表的排序 / 筛选 | `ui/chart/ChartDetailViewModel.kt` |
-| 数据从哪取、怎么转换（网络规则） | `core/repo/ChartRepository.kt` |
+| 单榜 / 歌单 / 专辑 / 喜欢 / 已购曲目列表的排序 / 筛选 | `ui/profile/TrackListViewModel.kt` | 统一详情页共用 |
+| 数据从哪取、怎么转换（网络规则） | `core/repo/ChartRepository.kt`、`core/repo/ProfileRepository.kt` |
+| 曲目 JSON 怎么解析成 `Track` | `core/repo/TrackParser.kt` |
 | 网络请求 / 签名 / 解析（基本不用动） | `core/net/` |
 
 ## 2.5 我的 / 登录 / 账号数据
@@ -34,6 +37,7 @@
 | 登录对话框（Cookie 粘贴 / 短信验证码） | `ui/screens/ProfileScreen.kt` 内 `LoginDialog` |
 | 账号 / 喜欢 / 已购 / 歌单的数据获取与解析 | `core/repo/ProfileRepository.kt` |
 | 曲目列表页（喜欢 / 已购 / 歌单 / 专辑） | `ui/screens/TrackListScreen.kt` + `ui/profile/TrackListViewModel.kt` |
+| 列表头部的收藏 / 播放 / 评论三按钮、滚动操作行 | `ui/playerbar/CollectionActions.kt` + `ui/screens/TrackListScreen.kt` |
 | 登录 / 验证码接口（JNI op 30/31、cookie 导入） | `app/src/main/cpp/libnetease_jni.c` + `core/net/NeteaseOp.kt` |
 
 ## 3. 播放：点歌、进度、后台、缓存
@@ -41,9 +45,11 @@
 | 我想… | 去改 |
 |---|---|
 | 开始播放的入口 / 行为 | `core/playback/PlaybackLauncher.kt` |
-| 播放状态（当前歌、暂停 / 继续、进度）给界面用 | `core/playback/PlayerHolder.kt` |
+| 播放状态（当前歌、暂停 / 继续、进度、随机 / 循环）给界面用 | `core/playback/PlayerHolder.kt` |
+| 播放控制（播放 / 切歌 / seek / 随机 / 循环） | `core/playback/PlayerHolder.kt` |
 | 后台播放通知 / 服务生命周期 | `core/playback/PlaybackService.kt` |
 | 边播边缓存的策略 | `core/playback/PlaybackCache.kt` |
+| 播放页 / 迷你条界面与手势 | `ui/playerbar/PlayerDock.kt` |
 
 ## 4. 装配与其他
 

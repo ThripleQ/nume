@@ -25,15 +25,14 @@
 ui/
 ├── theme/         # 主题（颜色/字体/尺寸）
 ├── library/       # 排行榜列表（LibraryScreen + LibraryViewModel）
-├── chart/         # 单榜曲目列表（已并入统一列表页，chart 包已删除）
 ├── profile/       # 我的（ProfileViewModel：登录态+区块数据；TrackListViewModel：统一"壳+列表"页状态）
-├── playerbar/     # 悬浮岛（PlayerCapsule：导航 tab + 迷你播放条 + 列表操作浮岛 ActionNavRow；
-│                  #   rememberPlayerState 是播放状态的唯一真相源，播放页也复用它；
-│                  #   CollectionActions 为列表头部三按钮）
+├── playerbar/     # 播放（PlayerDock.kt：常驻 dock + 全屏播放页**合体**，一份 PlayerDockState；
+│                  #   rememberPlayerState/rememberPlayerPosition 是播放状态的唯一真相源；
+│                  #   CollectionActions 为列表头部三按钮，列表头与滚动操作行共用）
+├── components/    # 跨功能通用组件（ExpandableShell：胶囊→全屏通用伸展壳）
 └── screens/       # 布局主体（哑组件，跨功能）
     ├── HomeScreen.kt        # 探索 tab 的占位首页（纯展示）
     ├── LibraryScreen.kt
-    ├── PlayerScreen.kt
     ├── SearchScreen.kt      # 搜索 tab 占位（纯展示，待实现）
     ├── ProfileScreen.kt     # 我的：登录入口 + 喜欢/已购/歌单区块 + 登录对话框
     ├── TrackListScreen.kt   # 统一详情页：榜单/歌单/专辑/喜欢/已购 = 壳（封面/标题/数据/操作按钮）+ 曲目列表
@@ -42,11 +41,14 @@ ui/
 core/
 ├── net/           # libnetease JNI 网关（数据出口）
 ├── repo/          # Repository：取/转换数据（ChartRepository / ProfileRepository /
-│                  #   TrackCollection 壳元数据模型）
-└── playback/      # 播放四件套：PlayerHolder（进程级播放器+状态+错误恢复）/
+│                  #   TrackCollection 壳元数据模型 / TrackParser 曲目解析）
+└── playback/      # 播放四件套：PlayerHolder（进程级播放器+状态+错误恢复+随机/循环）/
                    #   PlaybackLauncher（播放入口+补队列）/ PlaybackService（后台+通知）/
                    #   PlaybackCache（边播边缓存）
 ```
+
+> 注：原 `ui/chart/` 包与 `PlayerScreen.kt` 已删除——单榜曲目列表并入统一
+> `ui/screens/TrackListScreen.kt` + `ui/profile/TrackListViewModel.kt`；播放页并入 `ui/playerbar/PlayerDock.kt`。
 
 新增偶发：`ui/<功能>/` 建"Screen + ViewModel + UiState"，再把导航目的地加进 `NumeApp`。三步，无其他。
 
@@ -60,8 +62,8 @@ core/
 
 - 一个东西一个词：歌曲一律 `Track`（禁混 `Song`/`audioItem`）。
 - 每屏状态统一 `XxxUiState`（sealed：`Loading/Error/Ready`）。
-- 播放状态统一走 `rememberPlayerState`（`ui/playerbar/PlayerCapsule.kt`），播放页与迷你条共用，不再各写各的 listener + 轮询。
-- 播放控制（播放/暂停/切歌/seek）统一走 `PlayerHolder.togglePlay/skipNext/skipPrevious/seekTo`，含错误状态恢复。
+- 播放状态统一走 `rememberPlayerState` / `rememberPlayerPosition`（`ui/playerbar/PlayerDock.kt`），迷你条与播放页共用，不再各写各的 listener + 轮询。
+- 播放控制（播放/暂停/切歌/seek/随机/循环）统一走 `PlayerHolder.togglePlay/skipNext/skipPrevious/seekTo/toggleShuffle/cycleRepeat`，含错误状态恢复。
 - 事件触发统一走 ViewModel。
 - 目的地类型统一 `@Serializable`，集中在 `NumeApp`。
 

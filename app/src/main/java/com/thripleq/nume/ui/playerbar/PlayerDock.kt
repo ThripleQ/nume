@@ -313,7 +313,7 @@ enum class PlayerSheet { Closed, Half, Full }
  *
  * 锚点像素 = 胶囊展开进度（像素），几何是「胶囊 → 悬浮卡 → 全屏」两段 lerp：
  * - [PlayerSheet.Closed] = 0          → 壳收在迷你条胶囊原位
- * - [PlayerSheet.Half]   = HALF_ANCHOR_P*travelPx → 壳展开成悬浮卡（progress == 1.35，高卡装得下全部内容）
+ * - [PlayerSheet.Half]   = HALF_ANCHOR_P*travelPx → 壳展开成悬浮卡（progress == HALF_ANCHOR_P，高卡装得下全部内容）
  * - [PlayerSheet.Full]   = 2*travelPx → 壳盖满全屏（progress == 2）
  * [progress] = offset / travelPx ∈ [0,2]，在 draw 阶段读，不触发重组。
  *

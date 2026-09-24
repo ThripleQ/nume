@@ -1,7 +1,7 @@
 # Nume
 
 **new music** — an Android music player. The mobile counterpart to the desktop player
-[Netune](https://github.com/ThripleQ/netune), sharing the same NetEase Cloud data gateway,
+[Netune](https://github.com/ThripleQ/Netune), sharing the same NetEase Cloud data gateway,
 [libnetease](https://github.com/ThripleQ/libnetease).
 
 ## Tech stack
@@ -20,7 +20,9 @@ app/
     MainActivity.kt        # single activity, Compose entry (@AndroidEntryPoint)
     NumeApp.kt             # root UI + type-safe navigation graph
     di/                    # Hilt wiring (AppModule provides the gateway)
-    ui/                    # Compose screens + per-feature ViewModels/UiState
+    ui/                    # Compose 屏 + 各功能 ViewModel/UiState
+      playerbar/           # 常驻 dock + 全屏播放页合体（PlayerDock）、列表操作按钮
+      components/          # 跨功能通用组件（ExpandableShell 伸展壳）
     core/                  # net (libnetease gateway), repo, playback (Media3)
   src/main/cpp/            # JNI bridge to libnetease (CMake + NDK)
 ```
@@ -29,6 +31,7 @@ app/
 
 - **[docs/architecture.md](docs/architecture.md)** — 架构地图（分层/数据流/决策/路线图），唯一事实源
 - **[docs/navigation-map.md](docs/navigation-map.md)** — 找东西的心智地图（三桶归位 / 命名 / 怎么搜）
+- **[docs/change-map.md](docs/change-map.md)** — 改动点速查（想改 X 去改哪个文件）
 - **[docs/composing-code.md](docs/composing-code.md)** — 编码纪律（依赖规矩 / 职责守恒 / type-safe 导航）
 
 ## Architecture direction

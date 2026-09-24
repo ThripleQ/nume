@@ -1,6 +1,6 @@
 # Nume 架构
 
-Nume 是桌面端播放器 [Netune](https://github.com/ThripleQ/netune) 的安卓版，
+Nume 是桌面端播放器 [Netune](https://github.com/ThripleQ/Netune) 的安卓版，
 共享同一个网易云数据网关 [libnetease](https://github.com/ThripleQ/libnetease)。
 核心目标是：**把 Netune 桌面端的缓存能力（分段缓存、Range 断点续传、seek 冷区并行下载、真实总时长）
 原样搬进安卓**，同时让 UI / 播放 / 网络完全由 Kotlin 掌控。
@@ -12,7 +12,7 @@ Nume 是桌面端播放器 [Netune](https://github.com/ThripleQ/netune) 的安�
 ```
 ┌───────────────────────────────────────────────┐
 │ UI 层 · Jetpack Compose + Material 3           │
-│   登录(后续) · Home(歌单/专辑/搜索) · Player    │
+│   登录 · 探索/搜索 · 我的 · 详情列表 · 播放页   │
 │   ViewModel ←→ UiState                         │
 └───────────────────┬───────────────────────────┘
                     ▼
@@ -78,17 +78,39 @@ libnetease 以 `NE_USE_CURL=OFF` 编译，**不依赖 curl**。所有请求照�
 - **队列播放**：点一首歌以整榜为队列，`Player.setMediaItems(...)` 让 ⏮/⏭/自动连播生效。
 - **离线**(后续)：Media3 提供 `DownloadManager`，接入后支持“下载到离线”整批。
 
-## 六、持久化
+## 六、播放 UI（PlayerDock 合体 + 通用伸展壳）
+
+播放界面不是独立页面，而是**常驻底部 dock 与全屏播放页合体**在 `ui/playerbar/PlayerDock.kt`：
+
+- **单组件、单状态**：一份 `PlayerDockState` + 官方 `AnchoredDraggableState`，三档
+  `Closed / Half / Full`；`progress = offset / travelPx ∈ [0,2]`（0=收在迷你条胶囊、1=悬浮卡、
+  2=盖满全屏），**只在 draw 阶段（graphicsLayer）读，绝不驱动挂载/组合**（铁律）。
+- **两段式几何**：`[0,1]` 胶囊原位展开成悬浮卡（dock 仍可见可点），`[1,2]` 卡片放大盖满全屏
+  （dock 淡出）；几何/圆角在 draw 阶段用 `graphicsLayer` + `drawWithContent(clipPath)` 画实心卡，
+  零重组、不透底。
+- **手势**：迷你条上滑 1:1 跟手、松手按位置/速度吸附；点迷你条/列表项 `open(toFull=true)` 直达全屏；
+  收起箭头/返回键回落。
+- **单布局连续形变**：卡片与全屏共用一套骨架（封面→标题→歌手→弹性空白→进度→控制），随 `sc`
+  连续插值；全屏专属动作行/分割线/功能胶囊行以「高度+alpha」长出，播放键由裸图标长成
+  `primaryContainer` 圆；标题/歌手全程在封面下方。
+- **状态与真相源**：`rememberPlayerState`（元数据/播放态，低频）与 `rememberPlayerPosition`
+  （进度，高频）拆开订阅，避免 250ms 轮询触发整页重组；播放控制走 `PlayerHolder`。
+- **通用伸展壳**：`ui/components/ExpandableShell.kt` 提供「胶囊 → 全屏面板」的通用过渡
+  （我的页「喜欢的音乐」等复用），动画/尾帧/BackHandler 内聚，并约定与起点胶囊同构的对齐契约。
+- **列表操作行**：`ui/playerbar/CollectionActions.kt` 提供收藏/播放/评论三按钮，列表头部与
+  滚动浮岛共用；`TrackListScreen` 上报三按钮是否滑出视口，供 dock 切换为操作行。
+
+## 七、持久化
 
 - Room(后续)：元数据（歌单、歌单曲目、歌词缓存、下载记录）。
 - Media3 `SimpleCache` 自带哈希索引 + `StandaloneDatabaseProvider` 落库，独立于应用 UI 数据。
 
-## 七、测试 / 构建
+## 八、测试 / 构建
 
 - 本地：`./gradlew :app:assembleRelease`（JAVA_HOME 指向 Android Studio 的 JBR）。
 - CI：GitHub Actions 在 push 到 `main`/`beta` 时构建并上传 debug APK。
 
-## 八、路线图 / 当前状态
+## 九、路线图 / 当前状态
 
 - [x] 项目骨架、主题、导航
 - [x] libnetease 子模块接入 + 原生桥（NDK/CMake、transport 注入）
@@ -102,5 +124,6 @@ libnetease 以 `NE_USE_CURL=OFF` 编译，**不依赖 curl**。所有请求照�
 - [x] type-safe 导航（@Serializable destination，目的地集中定义，替代字符串路径）
 - [x] 我的页：登录（Cookie 粘贴 / 短信验证码）+ 喜欢的音乐 + 已购 + 收藏/创建的歌单
 - [ ] 登录二维码（另做）
-- [ ] Home / 搜索 / 播放页打磨
+- [x] 播放页打磨（PlayerDock 合体：迷你条↔卡片↔全屏两段式、单布局连续形变、随机/循环接 ExoPlayer）
+- [ ] 探索(Home) / 搜索页（目前仍是占位，纯展示）
 - [ ] 离线下载（DownloadManager）
