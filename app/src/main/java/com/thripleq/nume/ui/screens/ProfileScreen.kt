@@ -36,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -81,6 +82,7 @@ fun ProfileScreen(
     onWebLogin: () -> Unit,
     onOpenPlayer: () -> Unit = {},
     islandHeight: Float = 0f,
+    onShellOpenChange: (Boolean) -> Unit = {},
     vm: ProfileViewModel = hiltViewModel(),
 ) {
     val state by vm.uiState.collectAsStateWithLifecycle()
@@ -88,6 +90,11 @@ fun ProfileScreen(
 
     // 当前打开的面板（null = 无面板）。
     var panel by remember { mutableStateOf<ProfilePanel?>(null) }
+
+    // 面板打开时通知上层收起底部导航（保留迷你播放条）；离开页面时复位。
+    val shellOpen = panel != null
+    LaunchedEffect(shellOpen) { onShellOpenChange(shellOpen) }
+    DisposableEffect(Unit) { onDispose { onShellOpenChange(false) } }
     // 被点击胶囊的屏幕坐标（ExpandableShell 动画起点；点哪颗就从哪颗起跳）。
     var panelRect by remember { mutableStateOf<Rect?>(null) }
     val uid = (state as? ProfileUiState.LoggedIn)?.data?.account?.uid?.toString()
@@ -666,7 +673,8 @@ private fun ProfilePanel(
                             onBack = onDismiss,
                             onOpenPlayer = onOpenPlayer,
                             showTopBar = false,
-                            compactHeader = true,
+                            // 壳顶标题栏已示集合名，封面不再重复。
+                            showName = false,
                         )
                     }
                     is ProfilePanel.Playlists -> PlaylistGridPanel(

@@ -111,6 +111,9 @@ fun NumeApp() {
     // dock 总高（dp）：PlayerDock 上报，供 Profile 展开壳底部让位。
     var islandHeightDp by remember { mutableStateOf(0f) }
 
+    // 展开壳（探索大封面 / Profile 面板）是否打开：打开时收起底部导航，只留迷你播放条。
+    var shellOpen by remember { mutableStateOf(false) }
+
     // 播放页状态：常驻 dock 与全屏播放页合体（同一组件/同一份 progress）。
     // 点击迷你条/列表项 → state.open() 整页弹出；迷你条上滑 1:1 跟手由组件内手势驱动。
     val dockState = rememberPlayerDockState()
@@ -125,7 +128,14 @@ fun NumeApp() {
             startDestination = Home,
             modifier = Modifier.fillMaxSize(),
         ) {
-            composable<Home> { HomeScreen() }
+            composable<Home> {
+                HomeScreen(
+                    onOpenPlayer = ::openPlayer,
+                    onWebLogin = { navController.navigate(WebLogin) },
+                    islandHeight = islandHeightDp,
+                    onShellOpenChange = { shellOpen = it },
+                )
+            }
             composable<Library> {
                 LibraryScreen(
                     onOpenChart = { id, name ->
@@ -167,6 +177,7 @@ fun NumeApp() {
                     onWebLogin = { navController.navigate(WebLogin) },
                     onOpenPlayer = ::openPlayer,
                     islandHeight = islandHeightDp,
+                    onShellOpenChange = { shellOpen = it },
                     vm = profileVm,
                 )
             }
@@ -221,6 +232,7 @@ fun NumeApp() {
                 }
             },
             actionVisible = isListDetail && listActionsOffscreen,
+            navVisible = !shellOpen,
             onPlayAll = { listPlayAll?.invoke() },
             onPlaceholderAction = {
                 android.widget.Toast.makeText(context, "开发中", android.widget.Toast.LENGTH_SHORT).show()

@@ -33,23 +33,27 @@ data class TrackCollection(
     val tracks: List<Track>,
 )
 
+/** 接口常把缺失字段返回为 JSON null，org.json 的 optString 会得到字面量 "null"；
+ *  统一清洗掉 "null"/"undefined"，避免直接显示在界面上。 */
+private fun JSONObject.strOrEmpty(key: String): String =
+    optString(key).takeIf { it.isNotBlank() && it != "null" && it != "undefined" } ?: ""
+
 /**
  * 从 /weapi/v3/playlist/detail 返回的 playlist 对象解析壳元数据 + 曲目。
  * 榜单 id 就是歌单 id，两者共用此解析；曲目用共享的 [parseTracks]。
  */
 fun parsePlaylistObject(obj: JSONObject): TrackCollection {
     val id = obj.optLong("id", 0L)
-    val creator = obj.optJSONObject("creator")?.optString("nickname")
-        ?.takeIf { it.isNotBlank() } ?: ""
+    val creator = obj.optJSONObject("creator")?.strOrEmpty("nickname") ?: ""
     return TrackCollection(
         id = id.toString(),
-        name = obj.optString("name"),
-        coverUrl = obj.optString("coverImgUrl").takeIf { it.isNotBlank() },
+        name = obj.strOrEmpty("name"),
+        coverUrl = obj.strOrEmpty("coverImgUrl").takeIf { it.isNotBlank() },
         playCount = obj.optLong("playCount", 0L),
         subscribedCount = obj.optLong("subscribedCount", 0L),
         trackCount = obj.optLong("trackCount", 0L),
-        updateFrequency = obj.optString("updateFrequency").takeIf { it.isNotBlank() } ?: "",
-        description = obj.optString("description").takeIf { it.isNotBlank() } ?: "",
+        updateFrequency = obj.strOrEmpty("updateFrequency"),
+        description = obj.strOrEmpty("description"),
         creator = creator,
         tracks = parseTracks(obj.optJSONArray("tracks")),
     )

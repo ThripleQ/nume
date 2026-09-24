@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,7 +28,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DiscFull
-import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.Icon
@@ -50,8 +50,8 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -59,6 +59,8 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.thripleq.nume.core.repo.Track
 import com.thripleq.nume.core.repo.TrackCollection
+import com.thripleq.nume.ui.components.BigCoverVisual
+import com.thripleq.nume.ui.components.LocalShellProgress
 import com.thripleq.nume.ui.playerbar.CollectionActions
 import com.thripleq.nume.ui.profile.TrackListSource
 import com.thripleq.nume.ui.profile.TrackListUiState
@@ -78,7 +80,9 @@ fun TrackListScreen(
     onOpenPlayer: () -> Unit,
     onActionsOffscreen: (Boolean) -> Unit = {},
     showTopBar: Boolean = true,
-    compactHeader: Boolean = false,
+    /** 封面是否显示集合名；调用方已在顶栏/壳顶标题栏显示标题时可传 false 避免重复。 */
+    showName: Boolean = true,
+    bottomPadding: Dp = 16.dp,
 ) {
     val vm: TrackListViewModel = hiltViewModel()
     val state by vm.uiState.collectAsStateWithLifecycle()
@@ -120,31 +124,30 @@ fun TrackListScreen(
             }
         }
         if (collection != null) {
+            // 统一 banner 头：封面是列表第一项（左右 16dp 内缩、随滚动移出），元信息叠在封面里；
+            // 列表行同样 16dp 内缩，与封面同宽。所有列表（榜单/歌单/专辑/喜欢/已购）共用此形态。
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
-                    start = if (compactHeader) 8.dp else 16.dp,
-                    top = if (compactHeader) 0.dp else 8.dp,
-                    end = if (compactHeader) 8.dp else 16.dp,
-                    bottom = 16.dp,
+                    start = 0.dp,
+                    top = if (showTopBar) 8.dp else 0.dp,
+                    end = 0.dp,
+                    bottom = bottomPadding,
                 ),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 item(key = "header") {
-                    TrackListHeader(
-                        collection,
-                        vm,
-                        onActionsTop = { actionsTop = it },
-                        compact = compactHeader,
-                    )
+                    TrackListBannerHeader(collection, vm, showName) { actionsTop = it }
                 }
                 itemsIndexed(
                     collection.tracks,
                     key = { _, t -> t.id },
                     contentType = { _, _ -> "track" },
                 ) { index, track ->
-                    TrackRow(index, track) { vm.onTrackClick(collection, index) }
+                    TrackRow(index, track, hPadding = 16.dp) {
+                        vm.onTrackClick(collection, index)
+                    }
                 }
             }
         } else {
@@ -197,175 +200,47 @@ private fun LoadingHint(text: String) {
     }
 }
 
-/* ── 头部：壳的元数据 + 操作按钮 ─────────────────────── */
-
-@Composable
-private fun TrackListHeader(
-    collection: TrackCollection,
-    vm: TrackListViewModel,
-    onActionsTop: (Float) -> Unit,
-    compact: Boolean = false,
-) {
-    if (compact) {
-        TrackListHeaderCompact(collection, vm, onActionsTop)
-        return
-    }
-    val context = LocalContext.current.applicationContext
-
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(240.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        ) {
-            // model 整体 remember：AsyncImagePainter 以 model 为 key，每次重组新建
-            // ImageRequest 会重走请求分发；按 480px（240dp 封面 @2x）尺寸构造并缓存。
-            val context = LocalContext.current
-            val cover = remember(collection.coverUrl) {
-                collection.coverUrl?.let {
-                    ImageRequest.Builder(context).data(it).size(480).build()
-                }
-            }
-            if (cover != null) {
-                AsyncImage(
-                    model = cover,
-                    contentDescription = collection.name,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Icon(
-                        Icons.Filled.List,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(64.dp),
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-        Text(
-            text = collection.name,
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Center,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-
-        val line = collectionMetaLine(collection)
-        if (line.isNotBlank()) {
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = line,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (collection.updateFrequency.isNotBlank()) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = collection.updateFrequency,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
-        }
-        if (collection.description.isNotBlank()) {
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = collection.description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-
-        Spacer(Modifier.height(16.dp))
-        // onGloballyPositioned 上报三按钮顶部 y，供滚动浮岛判定"即将滑出视口"。
-        Row(
-            modifier = Modifier.onGloballyPositioned { onActionsTop(it.positionInWindow().y) },
-        ) {
-            CollectionActions(
-                onPlayAll = { vm.onPlayAll(collection) },
-                onPlaceholderAction = {
-                    Toast.makeText(context, "开发中", Toast.LENGTH_SHORT).show()
-                },
-            )
-        }
-    }
-}
-
 /**
- * 紧凑头部：用于展开壳内的列表（胶囊拉成面板）。
- * 封面居中，下方一行元信息（播放量/收藏数等），再下方横排操作按钮。
- * 不再显示集合名称（壳顶标题栏已示"喜欢的音乐"，避免重复）。
+ * Banner 头：封面作为列表第一项，随列表滚动移出。
+ *
+ * 封面与列表行的内容同宽（左右 16dp 内缩），方形、圆角；内缩量随壳展开进度从 0 收到 16dp，
+ * 于是 p=0 时封面恰好满宽等于起点卡片（同源对齐契约），完全展开后与列表对齐。
+ * 元信息叠在封面底部（名字下方，渐变遮罩保证可读）。
  */
 @Composable
-private fun TrackListHeaderCompact(
+private fun TrackListBannerHeader(
     collection: TrackCollection,
     vm: TrackListViewModel,
+    showName: Boolean = true,
     onActionsTop: (Float) -> Unit,
 ) {
     val context = LocalContext.current.applicationContext
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
+    val p = LocalShellProgress.current
+    val meta = listOfNotNull(
+        collectionMetaLine(collection).takeIf { it.isNotBlank() },
+        collection.updateFrequency.takeIf { it.isNotBlank() },
+        collection.description.takeIf { it.isNotBlank() },
+    ).joinToString("\n")
+
+    Column(Modifier.fillMaxWidth()) {
         Box(
-            modifier = Modifier
-                .size(120.dp)
-                .clip(RoundedCornerShape(22.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp * p)
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(16.dp)),
         ) {
-            val context = LocalContext.current
-            val cover = remember(collection.coverUrl) {
-                collection.coverUrl?.let {
-                    ImageRequest.Builder(context).data(it).size(240).build()
-                }
-            }
-            if (cover != null) {
-                AsyncImage(
-                    model = cover,
-                    contentDescription = collection.name,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Icon(
-                        Icons.Filled.List,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(44.dp),
-                    )
-                }
-            }
-        }
-        val line = collectionMetaLine(collection)
-        if (line.isNotBlank()) {
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = line,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            BigCoverVisual(
+                coverUrl = collection.coverUrl,
+                name = collection.name,
+                modifier = Modifier.fillMaxSize(),
+                meta = meta.ifBlank { null },
+                showName = showName,
+                scrimTop = 0.35f,
+                scrimAlpha = 0.85f,
             )
         }
-        Spacer(Modifier.height(10.dp))
-        // 按钮行：等宽横排、整行居中，onGloballyPositioned 上报三按钮顶部 y，供滚动浮岛判定。
+        Spacer(Modifier.height(12.dp))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -409,7 +284,7 @@ private val trackRowBaseModifier = Modifier
     .clip(RoundedCornerShape(10.dp))
 
 @Composable
-private fun TrackRow(index: Int, track: Track, onClick: () -> Unit) {
+private fun TrackRow(index: Int, track: Track, hPadding: Dp = 8.dp, onClick: () -> Unit) {
     // model 整体 remember：AsyncImagePainter 以 model 为 key，每次重组新建 ImageRequest
     // 会重走请求分发；按 96px（48dp 封面 @2x）尺寸构造并缓存。
     val context = LocalContext.current
@@ -421,7 +296,7 @@ private fun TrackRow(index: Int, track: Track, onClick: () -> Unit) {
     Row(
         modifier = trackRowBaseModifier
             .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 8.dp),
+            .padding(horizontal = hPadding, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(

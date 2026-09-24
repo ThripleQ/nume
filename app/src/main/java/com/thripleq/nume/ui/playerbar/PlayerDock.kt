@@ -8,6 +8,10 @@ import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.AnchoredDraggableState
@@ -421,6 +425,8 @@ fun PlayerDock(
     onSelectTab: (BottomTab) -> Unit,
     /** 列表详情页操作行是否顶替迷你条上方的空间。 */
     actionVisible: Boolean = false,
+    /** 是否显示底部导航行：展开壳看列表时收起，只保留迷你播放条。 */
+    navVisible: Boolean = true,
     onPlayAll: () -> Unit = {},
     onPlaceholderAction: () -> Unit = {},
     /** dock 总高（dp）实时上报，供上层内容避让/Profile 展开壳让位。 */
@@ -452,10 +458,18 @@ fun PlayerDock(
         if (dockHeightPx > 0) onIslandHeightChange(with(density) { dockHeightPx.toDp() }.value)
     }
 
+    // 导航行被收起时 dock 变矮（只留迷你条）。播放页几何按「导航可见」的名义 dock 高度算，
+    // 再把整块壳下移被收起的高度（[dockShiftPx]）—— 卡片尺寸/比例不变，只是整体随迷你条下移，
+    // 拖拽仍 1:1 跟手。导航可见时名义高度 == 实测高度，一切照旧。
+    val navRowReservePx = with(density) { 65.dp.toPx() } // 分隔线 1dp + 导航行 64dp
+    val geometryDockHeightPx =
+        if (navVisible) dockHeightPx.toFloat() else dockHeightPx + navRowReservePx
+    val dockShiftPx = geometryDockHeightPx - dockHeightPx
+
     // 手势总行程 = 一个 progress 档位的位移。全屏锚点 = 2*travelPx = 屏高-dock 高 =
     // 手指从 dock 顶一路拉到屏顶的可见距离 —— **一行程直达全屏**，跟手不费劲，
     // 不再像以前那样全屏锚点在两倍行程、手指拖满一屏都够不到就弹回。
-    val travelPx = ((fullHeightPx - dockHeightPx) / 2f).coerceAtLeast(1f)
+    val travelPx = ((fullHeightPx - geometryDockHeightPx) / 2f).coerceAtLeast(1f)
 
     // 把行程同步进 state，并把三档锚点像素注册给 AnchoredDraggableState（拖动/吸附据此 1:1）。
     // 锚点 = 胶囊展开进度（px）：Closed=0、Half=HALF_ANCHOR_P*travelPx（高卡片，内容装得下）、
@@ -560,25 +574,33 @@ fun PlayerDock(
                 }
             }
 
-            // 分隔线 = 播放条与导航之间的分隔线（内缩与胶囊对齐）。
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp)
-                    .height(1.dp)
-                    .background(MaterialTheme.colorScheme.outlineVariant),
-            )
-
-            // 底部导航行：内垫手势条 inset，背景自然延伸到屏幕底。
-            Box(Modifier.fillMaxWidth().navigationBarsPadding()) {
-                NavRow(
-                    selected = selected,
-                    onSelect = onSelectTab,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(64.dp),
-                )
+            // 分隔线 + 底部导航行：展开壳看列表时整体收起（保留迷你播放条）。
+            AnimatedVisibility(
+                visible = navVisible,
+                enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
+            ) {
+                Column(Modifier.fillMaxWidth()) {
+                    // 分隔线 = 播放条与导航之间的分隔线（内缩与胶囊对齐）。
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp)
+                            .height(1.dp)
+                            .background(MaterialTheme.colorScheme.outlineVariant),
+                    )
+                    NavRow(
+                        selected = selected,
+                        onSelect = onSelectTab,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(64.dp),
+                    )
+                }
             }
+
+            // 手势条 inset 始终占位：导航收起时也保证播放条不压到系统导航区。
+            Box(Modifier.fillMaxWidth().navigationBarsPadding())
         }
 
         // ---- 全屏播放面（最上层）：open 才组合；p=0 整块沉在屏下（不可见/不可点）----
@@ -588,7 +610,8 @@ fun PlayerDock(
                 state = state,
                 player = player,
                 fullHeightPx = fullHeightPx,
-                dockHeightPx = dockHeightPx.toFloat(),
+                dockHeightPx = geometryDockHeightPx,
+                dockShiftPx = dockShiftPx,
                 onPlaceholderAction = onPlaceholderAction,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -935,6 +958,8 @@ private fun PlayerPage(
     player: Player,
     fullHeightPx: Float,
     dockHeightPx: Float,
+    /** 导航收起时整块壳要下移的量（px）；导航可见时为 0。 */
+    dockShiftPx: Float,
     onPlaceholderAction: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -999,7 +1024,14 @@ private fun PlayerPage(
             dockTopPx - gapPx * breakT
         }
         val inset = edgePx * splitT
-        val bubbleOrCard = Rect(inset, top, fullWidthPx - inset, bottom)
+        // 导航收起：整块壳下移 dockShiftPx（气泡底仍贴实际迷你条），尺寸/比例不变；
+        // 经 t1 在「卡片→全屏」段归零，全屏时仍精确盖满。
+        val bubbleOrCard = Rect(
+            inset,
+            top + dockShiftPx,
+            fullWidthPx - inset,
+            bottom + dockShiftPx,
+        )
 
         return lerpRect(bubbleOrCard, full, t1)
     }
@@ -1208,7 +1240,8 @@ private fun PlayerPageContent(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = androidx.compose.ui.unit.lerp(24.dp, 16.dp, sc))
-            .padding(top = 24.dp, bottom = 20.dp),
+            // 封面到卡片上边的距离取左右边距的 5:4（30dp vs 24dp），略长一点更透气。
+            .padding(top = 30.dp, bottom = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // 全屏时顶部让出状态栏（卡片档壳顶已在状态栏下，无需让位）。

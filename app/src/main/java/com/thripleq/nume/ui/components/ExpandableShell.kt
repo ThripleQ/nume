@@ -15,8 +15,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -26,6 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
@@ -33,6 +36,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+
+/** 壳当前展开进度（0..1），供内容里的浮层（如关闭按钮）做淡入。 */
+val LocalShellProgress = staticCompositionLocalOf { 1f }
 
 /**
  * 通用「胶囊壳 → 全屏面板」伸展覆盖层。
@@ -60,8 +66,13 @@ import kotlinx.coroutines.launch
  *                       内容区底部留出此高度露出底下导航岛，与岛同色融合
  * @param progress 外部受控展开进度（0..1）：非 null 时壳几何由它插值驱动（跟手），
  *                 自动开启动画被跳过；null 时用内部动画。关闭动画从当前进度续跑。
+ * @param contentFromStart 内容从头可见、无独立 header：内容不淡入（alpha 恒 1），
+ *                 让内容自身的第一项（如全宽封面）在 p=0 时恰好等于起点卡片、随壳生长；
+ *                 header 槽不渲染，[recessedBottom] 也忽略（改由内容自行留底部空间）。
+ *                 用于「大封面折进列表」——封面是列表第一项、随滚动移出。
  * @param onDismiss 关闭动画完全结束、壳复位后才回调（调用方借此移除本组件）
- * @param header    壳顶部标题栏（必须与胶囊头部同源）；接收 [onClose]，收起按钮应调它触发关闭动画
+ * @param header    壳顶部标题栏（必须与胶囊头部同源）；接收 [onClose]，收起按钮应调它触发关闭动画。
+ *                  [contentFromStart] 为 true 时不渲染。
  * @param content   壳内内容区（占剩余空间）
  */
 @Composable
@@ -72,6 +83,7 @@ fun ExpandableShell(
     containerColor: androidx.compose.ui.graphics.Color,
     recessedBottom: Dp = 0.dp,
     progress: Float? = null,
+    contentFromStart: Boolean = false,
     onDismiss: () -> Unit,
     header: @Composable (onClose: () -> Unit) -> Unit,
     content: @Composable () -> Unit,
@@ -159,7 +171,8 @@ fun ExpandableShell(
     val shellWidthPx = lerp(capsuleWidthPx, fullWidthPx, horizontal.value)
     val shellTopPx = lerp(capsuleTop, fullTop, vertical.value)
     val shellHeightPx = lerp(capsuleHeightPx, fullHeightPx, vertical.value)
-    val contentAlphaValue = contentAlpha.value
+    // contentFromStart：内容始终可见（封面随壳生长，p=0 时等于卡片）；否则按动画淡入。
+    val contentAlphaValue = if (contentFromStart) 1f else contentAlpha.value
 
     // 占位层：盖住底下页面、拦截触摸。
     Box(
@@ -167,6 +180,30 @@ fun ExpandableShell(
             .fillMaxSize()
             .onSizeChanged { viewWidth = it.width; viewHeight = it.height },
     ) {
+        // 触摸拦截层（在壳之下、底下页面之上）：吃掉所有落在壳外的指针事件。
+        // 否则展开动画期间壳还小，手指会穿透去滑动底下的列表；底下页面一滚，收起时
+        // fromRect（进入时捕获的卡片位置）就与实际位置错位了。
+        Box(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            awaitPointerEvent().changes.forEach { it.consume() }
+                        }
+                    }
+                },
+        )
+        // 顶部让位区（状态栏高度）用壳背景色填上：壳顶停在状态栏下沿是为了内容不被系统栏遮挡，
+        // 但这段空隙若透明会露出底下页面（"漏风"）。补上背景色即可，其余不动。
+        if (fullTopPx > 0f) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(with(density) { fullTopPx.toDp() })
+                    .background(containerColor),
+            )
+        }
         // 壳：位置/宽高全由插值驱动（graphicsLayer 平移 + 显式宽高）。
         // 壳延伸到屏幕底，贴地直角（只顶圆角）；底部让位由内容区（窟窿）padding 实现。
         val shellShape = RoundedCornerShape(topStart = shapeCornerDp, topEnd = shapeCornerDp)
@@ -182,19 +219,30 @@ fun ExpandableShell(
                 .clip(shellShape)
                 .background(containerColor),
         ) {
-            Column(Modifier.fillMaxSize().padding(vertical = 4.dp)) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .padding(vertical = if (contentFromStart) 0.dp else 4.dp),
+            ) {
                 // 头部标题栏：与起点胶囊的头部同一份 composable，颜色/图文相对位置天然一致。
                 // 把关闭动画触发器传给 slot：收起按钮调它走完整关闭动画，而不是直接移除壳。
-                header(::startClose)
-                // 内容区：占剩余空间，alpha 随动画淡入。
+                // contentFromStart 时无独立 header（封面本身是内容的第一项）。
+                if (!contentFromStart) {
+                    header(::startClose)
+                }
+                // 内容区：占剩余空间，alpha 随动画淡入（contentFromStart 时恒 1）。
                 // 底部让位 recessedBottom：内容区（窟窿）底部留出高度露出底下导航岛，与岛融合。
                 Box(
                     Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .padding(bottom = recessedBottom)
+                        .padding(bottom = if (contentFromStart) 0.dp else recessedBottom)
                         .graphicsLayer { alpha = contentAlphaValue },
-                    content = { content() },
+                    content = {
+                        CompositionLocalProvider(LocalShellProgress provides horizontal.value) {
+                            content()
+                        }
+                    },
                 )
             }
         }
