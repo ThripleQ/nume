@@ -34,21 +34,34 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -69,6 +82,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
@@ -94,6 +108,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
@@ -138,6 +153,8 @@ data class PlayerUiState(
     val positionMs: Long = 0L,
     val durationMs: Long = 0L,
     val hasTrack: Boolean = false,
+    val shuffleEnabled: Boolean = false,
+    val repeatMode: Int = Player.REPEAT_MODE_OFF,
     val errorText: String? = null,
 )
 
@@ -181,6 +198,14 @@ fun rememberPlayerState(
             override fun onPlayerError(error: PlaybackException) {
                 meta = meta.copy(errorText = error.errorCodeName ?: error.message)
             }
+
+            override fun onShuffleModeEnabledChanged(enabled: Boolean) {
+                meta = meta.copy(shuffleEnabled = enabled)
+            }
+
+            override fun onRepeatModeChanged(repeatMode: Int) {
+                meta = meta.copy(repeatMode = repeatMode)
+            }
         }
         player.addListener(listener)
         // Seed everything from the player's current state so the UI reflects
@@ -195,6 +220,8 @@ fun rememberPlayerState(
             isBuffering = player.playbackState == Player.STATE_BUFFERING,
             durationMs = player.duration.coerceAtLeast(0L),
             hasTrack = player.currentMediaItem != null,
+            shuffleEnabled = player.shuffleModeEnabled,
+            repeatMode = player.repeatMode,
         )
         try {
             while (true) {
@@ -248,7 +275,7 @@ private const val SPLIT = 0.5f
  *  高度足够装下封面+滑块+控制整组内容（此前卡片只有半屏高，内容溢出被裁、比例失调）。
  *  全屏固定 2；卡片→全屏的形变（贴边/收角/变色/dock淡出）全部在 [HALF_ANCHOR_P, 2] 内插值，
  *  壳顶仍全程随手指线性升降（跟手不变）、一行程直达全屏（行程不变）。 */
-private const val HALF_ANCHOR_P = 1.35f
+private const val HALF_ANCHOR_P = 1.66f
 
 /** 分裂段内部再分两拍：前一半「挤腰」（交界圆角涨大、两侧内收成腰），后一半「断开」（缝打开）。 */
 private const val SPLIT_SQUEEZE = 0.5f
@@ -562,6 +589,7 @@ fun PlayerDock(
                 player = player,
                 fullHeightPx = fullHeightPx,
                 dockHeightPx = dockHeightPx.toFloat(),
+                onPlaceholderAction = onPlaceholderAction,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -907,6 +935,7 @@ private fun PlayerPage(
     player: Player,
     fullHeightPx: Float,
     dockHeightPx: Float,
+    onPlaceholderAction: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val haptics = LocalHapticFeedback.current
@@ -996,10 +1025,17 @@ private fun PlayerPage(
         bottomStart = with(density) { bottomCornerPx.toDp() },
         bottomEnd = with(density) { bottomCornerPx.toDp() },
     )
-    // 底色：扩展/分裂段 = dock 色（气泡就是 dock 长出来的），全屏段渐到 surfaceContainerHigh。
-    val shellColor = lerp(
+    // 底色：扩展/挤腰段 = dock 色（气泡就是 dock 长出来的，贴合时零色差、不割裂）；
+    // 「断开」段（缝开始打开的同一拍）才渐亮到 surfaceContainerHigh——卡片剥落的同时
+    // 显出自身层次；全屏段再升到 surfaceContainerHighest。
+    val elevatedColor = lerp(
         MaterialTheme.colorScheme.surfaceContainer,
         MaterialTheme.colorScheme.surfaceContainerHigh,
+        breakT,
+    )
+    val shellColor = lerp(
+        elevatedColor,
+        MaterialTheme.colorScheme.surfaceContainerHighest,
         t1,
     )
     // 内容淡入：扩展段气泡长起来时内容浮现，分裂完成（p=1）已基本可见。
@@ -1043,8 +1079,8 @@ private fun PlayerPage(
                 .graphicsLayer {
                     translationX = rect.left
                     translationY = rect.top
-                    // 扩展段不投影（与 dock 浑然一体），分裂成卡后才浮起。
-                    shadowElevation = 1.dp.toPx() * splitT
+                    // 扩展/挤腰段不投影（与 dock 浑然一体），「断开」成卡才浮起。
+                    shadowElevation = 4.dp.toPx() * breakT
                     shape = shellShape
                     clip = true
                 }
@@ -1071,8 +1107,10 @@ private fun PlayerPage(
         Box(Modifier.fillMaxSize()) {
             PlayerPageContent(
                 player = player,
-                contentProgress = (p / 2f).coerceIn(0f, 1f),
+                contentProgress = p,
                 shellHeightPx = rect.height,
+                shellWidthPx = rect.width,
+                onPlaceholderAction = onPlaceholderAction,
                 modifier = Modifier.fillMaxSize().graphicsLayer { alpha = contentAlpha },
             )
             Box(
@@ -1116,98 +1154,138 @@ private fun PlayerPage(
     }
 }
 
-/** 播放页主体：封面 / 标题 / slider / 控制。 */
+/** 播放页主体：单一布局随 sc（0=卡片档，1=全屏）连续形变，卡片→全屏无割裂。
+ *  骨架全程一致：封面 → 标题 → 歌手 →（弹性空白）→ 进度 → 控制；
+ *  全屏专属的动作行/分割线/功能胶囊行以「高度+透明度」随 sc 长出，播放键由裸图标
+ *  长成 primaryContainer 圆。卡片档（sc=0）即原紧凑布局。 */
 @Composable
 private fun PlayerPageContent(
     player: Player,
     contentProgress: Float,
     shellHeightPx: Float,
+    shellWidthPx: Float,
+    onPlaceholderAction: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current.applicationContext
-
     var seekPending by remember { mutableStateOf(false) }
     var dragMs by remember { mutableLongStateOf(0L) }
     val state = rememberPlayerState(player)
     // 进度是高频状态：单独订阅（拖动时冻结，避免轮询跟手指打架）。
     val positionMs by rememberPlayerPosition(player) { seekPending }
-
     val rangeMax = state.durationMs.toFloat().coerceAtLeast(1f)
 
-    // 内容随壳展开度调整缩放/比例/排列：壳矮（卡片档）紧凑收敛、全屏舒展放大，
-    // 元素结构不变，只按壳实际升到多高插值尺寸与间距，与壳比例保持协调。
-    val sc = contentProgress.coerceIn(0f, 1f)
-    // 封面双重钳制：随进度 180→280dp，同时不超过壳实际高度的 40% ——
-    // 矮壳/卡片档绝不溢出被裁（此前半屏卡片装全屏内容就是被裁的根因）。
     val density = LocalDensity.current
-    val coverDim = minOf(
-        androidx.compose.ui.unit.lerp(180.dp, 280.dp, sc),
-        with(density) { (shellHeightPx * 0.4f).toDp() },
+    val sc = ((contentProgress - HALF_ANCHOR_P) / (2f - HALF_ANCHOR_P)).coerceIn(0f, 1f)
+    val statusBarDp = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
+    val widthDp = with(density) { shellWidthPx.toDp() }
+    val heightDp = with(density) { shellHeightPx.toDp() }
+
+    // 封面：卡片 = 内容区同宽（24dp 边距）；全屏 = 16dp 边距 + 屏高钳制。
+    val coverCard = minOf(widthDp - 48.dp, heightDp * 0.58f)
+    val coverFull = minOf(widthDp - 32.dp, heightDp * 0.45f)
+    val coverDim = androidx.compose.ui.unit.lerp(coverCard, coverFull, sc)
+    val coverCorner = androidx.compose.ui.unit.lerp(18.dp, 24.dp, sc)
+    val titleGap = androidx.compose.ui.unit.lerp(14.dp, 20.dp, sc)
+    val ctrlGap = androidx.compose.ui.unit.lerp(10.dp, 18.dp, sc)
+    val sideBtnDim = androidx.compose.ui.unit.lerp(26.dp, 34.dp, sc)
+    val titleFont = androidx.compose.ui.unit.lerp(21.sp, 28.sp, sc)
+    val artistFont = androidx.compose.ui.unit.lerp(14.sp, 16.sp, sc)
+    val titleColor = lerp(
+        MaterialTheme.colorScheme.onSurface,
+        MaterialTheme.colorScheme.primary,
+        sc,
     )
-    val coverCorner = androidx.compose.ui.unit.lerp(12.dp, 16.dp, sc)
-    val titleGap = androidx.compose.ui.unit.lerp(16.dp, 40.dp, sc)
-    val ctrlGap = androidx.compose.ui.unit.lerp(8.dp, 16.dp, sc)
-    val playBtnDim = androidx.compose.ui.unit.lerp(36.dp, 48.dp, sc)
-    val sideBtnDim = androidx.compose.ui.unit.lerp(24.dp, 32.dp, sc)
-    val bottomGap = androidx.compose.ui.unit.lerp(12.dp, 24.dp, sc)
-    val titleFont = androidx.compose.ui.unit.lerp(20.sp, 24.sp, sc)
+    val playBox = androidx.compose.ui.unit.lerp(48.dp, 72.dp, sc)
+    val playIcon = androidx.compose.ui.unit.lerp(44.dp, 36.dp, sc)
+    val playTint = lerp(
+        MaterialTheme.colorScheme.onSurface,
+        MaterialTheme.colorScheme.onPrimaryContainer,
+        sc,
+    )
+    val playContainer = MaterialTheme.colorScheme.primaryContainer.copy(alpha = sc)
 
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(start = 28.dp, end = 28.dp, top = 32.dp),
+            .padding(horizontal = androidx.compose.ui.unit.lerp(24.dp, 16.dp, sc))
+            .padding(top = 24.dp, bottom = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
     ) {
-        Spacer(Modifier.weight(1f))
+        // 全屏时顶部让出状态栏（卡片档壳顶已在状态栏下，无需让位）。
+        Spacer(Modifier.height(androidx.compose.ui.unit.lerp(0.dp, statusBarDp + 16.dp, sc)))
 
-        // Cover
-        Box(
-            modifier = Modifier
-                .size(coverDim)
-                .clip(RoundedCornerShape(coverCorner))
-                .background(MaterialTheme.colorScheme.surface),
-        ) {
-            state.coverUrl?.let { uri ->
-                val model = remember(uri) {
-                    ImageRequest.Builder(context).data(uri).size(560).build()
-                }
-                AsyncImage(
-                    model = model,
-                    contentDescription = state.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-        }
+        CoverArt(
+            state = state,
+            dim = coverDim,
+            corner = coverCorner,
+            iconSize = androidx.compose.ui.unit.lerp(88.dp, 96.dp, sc),
+        )
 
         Spacer(Modifier.height(titleGap))
 
-        // Track / metadata
+        // Track / metadata（标题全程在封面下方）
         Text(
             text = state.title.ifEmpty { "暂无播放" },
             style = MaterialTheme.typography.headlineSmall.copy(fontSize = titleFont),
-            color = MaterialTheme.colorScheme.onSurface,
+            color = titleColor,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.fillMaxWidth(),
             textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = state.artist,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth(),
-            textAlign = TextAlign.Center,
-        )
+        // 歌手为空时整行折叠，不留空洞。
+        if (state.artist.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = state.artist,
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = artistFont),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center,
+            )
+        }
 
         Spacer(Modifier.weight(1f))
 
-        // Seek bar + time labels
-        Column(Modifier.fillMaxWidth()) {
+        // 全屏专属：动作行（收藏/评论 左，播放列表 右），高度与透明度随 sc 长出。
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp * sc)
+                .clipToBounds()
+                .graphicsLayer { alpha = sc },
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onPlaceholderAction, modifier = Modifier.size(40.dp)) {
+                    Icon(Icons.Filled.Favorite, "收藏", tint = MaterialTheme.colorScheme.primary)
+                }
+                IconButton(onClick = onPlaceholderAction, modifier = Modifier.size(40.dp)) {
+                    Icon(Icons.Filled.Chat, "评论", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            IconButton(onClick = onPlaceholderAction, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    Icons.Filled.QueueMusic,
+                    "播放列表",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Spacer(Modifier.height(16.dp * sc))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp * sc)
+                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f * sc)),
+        )
+        Spacer(Modifier.height(16.dp * sc))
+
+        // Seek bar + time labels（卡片/全屏同序：先条后时间）
+        if (state.durationMs > 0) {
             Slider(
                 value = if (seekPending) dragMs.toFloat() else positionMs.toFloat(),
                 onValueChange = { dragMs = it.toLong(); seekPending = true },
@@ -1216,31 +1294,49 @@ private fun PlayerPageContent(
                     seekPending = false
                 },
                 valueRange = 0f..rangeMax,
-                enabled = state.durationMs > 0,
-            )
-            Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+            )
+        } else {
+            // 暂无播放：只画一条干净的静态轨道 —— M3 disabled Slider 会留一个悬浮 thumb
+            // 和端点小圆点，像坏掉；这里用同样的轨道高度/内缩，但去掉 thumb。
+            Box(
+                modifier = Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 16.dp),
+                contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    formatTime(positionMs),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    formatTime(state.durationMs),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)),
                 )
             }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                formatTime(positionMs),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                formatTime(state.durationMs),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         Spacer(Modifier.height(ctrlGap))
 
-        // Transport controls
+        // Transport controls：圆播放键由「裸图标」长成 primaryContainer 圆。
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
+            horizontalArrangement = Arrangement.spacedBy(
+                androidx.compose.ui.unit.lerp(0.dp, 40.dp, sc),
+                Alignment.CenterHorizontally,
+            ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = { PlayerHolder.skipPrevious(player) }) {
@@ -1251,17 +1347,28 @@ private fun PlayerPageContent(
                     modifier = Modifier.size(sideBtnDim),
                 )
             }
-            IconButton(onClick = { PlayerHolder.togglePlay(player) }) {
-                Icon(
-                    imageVector = when {
-                        state.isBuffering -> Icons.Filled.MoreHoriz
-                        state.isPlaying -> Icons.Filled.Pause
-                        else -> Icons.Filled.PlayArrow
-                    },
-                    contentDescription = if (state.isPlaying) "暂停" else "播放",
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(playBtnDim),
-                )
+            Box(
+                modifier = Modifier
+                    .size(playBox)
+                    .clip(CircleShape)
+                    .background(playContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                IconButton(
+                    onClick = { PlayerHolder.togglePlay(player) },
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    Icon(
+                        imageVector = when {
+                            state.isBuffering -> Icons.Filled.MoreHoriz
+                            state.isPlaying -> Icons.Filled.Pause
+                            else -> Icons.Filled.PlayArrow
+                        },
+                        contentDescription = if (state.isPlaying) "暂停" else "播放",
+                        tint = playTint,
+                        modifier = Modifier.size(playIcon),
+                    )
+                }
             }
             IconButton(onClick = { PlayerHolder.skipNext(player) }) {
                 Icon(
@@ -1273,8 +1380,49 @@ private fun PlayerPageContent(
             }
         }
 
-        Spacer(Modifier.height(8.dp))
+        // 全屏专属：功能胶囊行，高度与透明度随 sc 长出。
+        Spacer(Modifier.height(24.dp * sc))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp * sc)
+                .clipToBounds()
+                .graphicsLayer { alpha = sc },
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            FullChip(
+                icon = Icons.Filled.Shuffle,
+                contentDescription = "随机播放",
+                active = state.shuffleEnabled,
+                onClick = { PlayerHolder.toggleShuffle(player) },
+            )
+            FullChip(
+                icon = if (state.repeatMode == Player.REPEAT_MODE_ONE) {
+                    Icons.Filled.RepeatOne
+                } else {
+                    Icons.Filled.Repeat
+                },
+                contentDescription = "循环模式",
+                active = state.repeatMode != Player.REPEAT_MODE_OFF,
+                onClick = { PlayerHolder.cycleRepeat(player) },
+            )
+            FullChip(
+                icon = Icons.Filled.Bedtime,
+                contentDescription = "定时关闭",
+                active = false,
+                onClick = onPlaceholderAction,
+            )
+            FullChip(
+                icon = Icons.Filled.MoreVert,
+                contentDescription = "更多",
+                active = false,
+                onClick = onPlaceholderAction,
+            )
+        }
+
         state.errorText?.let {
+            Spacer(Modifier.height(8.dp))
             Text(
                 text = it,
                 style = MaterialTheme.typography.bodySmall,
@@ -1283,11 +1431,80 @@ private fun PlayerPageContent(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-
-        Spacer(Modifier.height(bottomGap))
-        Spacer(Modifier.weight(1f))
     }
 }
+
+/** 全屏档功能胶囊：56×44 圆角矩形，激活态用 primaryContainer 高亮。 */
+@Composable
+private fun FullChip(
+    icon: ImageVector,
+    contentDescription: String,
+    active: Boolean,
+    onClick: () -> Unit,
+) {
+    FilledTonalIconButton(
+        onClick = onClick,
+        modifier = Modifier.size(width = 56.dp, height = 44.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = IconButtonDefaults.filledTonalIconButtonColors(
+            containerColor = if (active) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.secondaryContainer
+            },
+            contentColor = if (active) {
+                MaterialTheme.colorScheme.onPrimaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSecondaryContainer
+            },
+        ),
+    ) {
+        Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(22.dp))
+    }
+}
+
+/** 封面：卡片/全屏共用；无图时用弱化音符占位，有图按目标像素解码。 */
+@Composable
+private fun CoverArt(
+    state: PlayerUiState,
+    dim: Dp,
+    corner: Dp,
+    iconSize: Dp,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current.applicationContext
+    val density = LocalDensity.current
+    val px = with(density) { dim.toPx() }.roundToInt().coerceIn(64, 1280)
+    Box(
+        modifier = modifier
+            .size(dim)
+            .clip(RoundedCornerShape(corner))
+            .background(MaterialTheme.colorScheme.surface),
+        contentAlignment = Alignment.Center,
+    ) {
+        val coverUrl = state.coverUrl
+        if (coverUrl == null) {
+            // 空状态：一块空白封面太秃，放个弱化的音符占位。
+            Icon(
+                Icons.Filled.MusicNote,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                modifier = Modifier.size(iconSize),
+            )
+        } else {
+            val model = remember(coverUrl, px) {
+                ImageRequest.Builder(context).data(coverUrl).size(px).build()
+            }
+            AsyncImage(
+                model = model,
+                contentDescription = state.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
+}
+
 
 private fun formatTime(ms: Long): String {
     val total = ms.coerceAtLeast(0L) / 1000

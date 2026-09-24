@@ -111,6 +111,20 @@ object PlayerHolder {
         player.seekTo(positionMs)
     }
 
+    /** 随机播放开关（直接映射 ExoPlayer.shuffleModeEnabled）。 */
+    fun toggleShuffle(player: Player) {
+        player.shuffleModeEnabled = !player.shuffleModeEnabled
+    }
+
+    /** 循环模式轮换：关 → 列表循环 → 单曲循环 → 关。 */
+    fun cycleRepeat(player: Player) {
+        player.repeatMode = when (player.repeatMode) {
+            Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+            Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+            else -> Player.REPEAT_MODE_OFF
+        }
+    }
+
     private fun build(context: Context): ExoPlayer {
         // Upstream HTTP (the audio CDN). Accept protocol redirects and keep a
         // UA so netease's CDN doesn't 4xx on us.
