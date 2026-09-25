@@ -5,7 +5,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.logging.HttpLoggingInterceptor
 import android.util.Log
+import com.thripleq.nume.BuildConfig
 import java.util.concurrent.TimeUnit
 
 /**
@@ -35,6 +37,15 @@ object NumeTransport {
         private val client = OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
+            .apply {
+                if (BuildConfig.DEBUG) {
+                    // BASIC = method/url/status/timing; never bodies (cookies/credentials).
+                    addInterceptor(
+                        HttpLoggingInterceptor { Log.d("NumeHttp", it) }
+                            .setLevel(HttpLoggingInterceptor.Level.BASIC),
+                    )
+                }
+            }
             .build()
 
         private val formType = "application/x-www-form-urlencoded; charset=UTF-8"

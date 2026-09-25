@@ -2,6 +2,7 @@ package com.thripleq.nume
 
 import android.app.Application
 import android.os.Build
+import android.os.StrictMode
 import coil.Coil
 import coil.ImageLoader
 import coil.disk.DiskCache
@@ -12,6 +13,7 @@ import dagger.hilt.android.HiltAndroidApp
 class NumeApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        if (BuildConfig.DEBUG) enableStrictMode()
         // 封面加载策略对齐成熟 Compose 播放器（InnerTune/ViMusic）的验证过路径：
         // 不预载、不限制并发（Coil 默认线程池 + LRU 已是千万设备验证过的行为）、磁盘缓存兜底。
         //
@@ -33,5 +35,24 @@ class NumeApplication : Application() {
             }
             .build()
         Coil.setImageLoader(imageLoader)
+    }
+
+    /** Debug-only: surface main-thread disk/network and leaks in logcat. */
+    private fun enableStrictMode() {
+        StrictMode.setThreadPolicy(
+            StrictMode.ThreadPolicy.Builder()
+                .detectDiskReads()
+                .detectDiskWrites()
+                .detectNetwork()
+                .penaltyLog()
+                .build(),
+        )
+        StrictMode.setVmPolicy(
+            StrictMode.VmPolicy.Builder()
+                .detectLeakedClosableObjects()
+                .detectActivityLeaks()
+                .penaltyLog()
+                .build(),
+        )
     }
 }
