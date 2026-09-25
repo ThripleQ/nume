@@ -721,6 +721,9 @@ private fun ProfilePanel(
                             showTopBar = false,
                             // 壳顶标题栏已示集合名，封面不再重复。
                             showName = false,
+                            // 胶囊面板走「内容固定终态排版 + 壳裁剪露出」，封面内缩用常量，
+                            // 使列表 measure 在展开动画期间被跳过。
+                            coverInsetFollowsShell = false,
                         )
                     }
                     is ProfilePanel.Playlists -> PlaylistGridPanel(

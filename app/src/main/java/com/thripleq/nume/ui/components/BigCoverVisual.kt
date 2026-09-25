@@ -15,6 +15,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -24,6 +25,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImagePainter
 import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
 
@@ -38,6 +40,8 @@ import coil.request.ImageRequest
  * @param showName 是否显示名字；调用方已在别处显示标题时（如壳顶标题栏）可传 false 避免重复
  * @param scrimTop 渐变遮罩起始位置（0..1，越大遮罩越短）；banner 需承载多行文字故可调高
  * @param scrimAlpha 渐变底部黑度（0..1），保证文字可读
+ * @param requestSize 解码尺寸（px）。卡片/hero 用 480（小图先顶），全屏 banner 用更大值拿到高清版。
+ * @param onLoadSuccess 封面真正绘制出来（加载成功或失败落定）时回调一次；供 hero 交接。
  */
 @Composable
 fun BigCoverVisual(
@@ -48,15 +52,24 @@ fun BigCoverVisual(
     showName: Boolean = true,
     scrimTop: Float = 0.5f,
     scrimAlpha: Float = 0.66f,
+    requestSize: Int = 480,
+    onLoadSuccess: (() -> Unit)? = null,
 ) {
     Box(modifier) {
         val context = LocalContext.current
-        val model = remember(coverUrl) {
-            coverUrl?.let { ImageRequest.Builder(context).data(it).size(480).build() }
+        val model = remember(coverUrl, requestSize) {
+            coverUrl?.let { ImageRequest.Builder(context).data(it).size(requestSize).build() }
         }
         if (model != null) {
             // 占位微光仅在加载中组合，加载完成即移除（不再常驻无限扫光）。
             val painter = rememberAsyncImagePainter(model)
+            LaunchedEffect(painter.state) {
+                // 成功或失败都算「已落定」，避免封面 404 时 hero 永远顶着不交接。
+                val s = painter.state
+                if (s is AsyncImagePainter.State.Success || s is AsyncImagePainter.State.Error) {
+                    onLoadSuccess?.invoke()
+                }
+            }
             ShimmerImagePlaceholder(painter, Modifier.matchParentSize())
             Image(
                 painter = painter,
@@ -65,6 +78,7 @@ fun BigCoverVisual(
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
+            LaunchedEffect(Unit) { onLoadSuccess?.invoke() }
             Box(
                 Modifier.matchParentSize().background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center,

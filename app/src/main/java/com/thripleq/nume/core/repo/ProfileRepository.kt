@@ -70,9 +70,15 @@ class ProfileRepository @Inject constructor(
      *  account() 不必每次都打一次 /account 往返；5s 内复用并保留旧值保证不闪。 */
     private var cachedAccount: Pair<Account?, Long>? = null
 
+    /** 已购单曲/专辑缓存：面板重开、Profile 静默刷新不再重复分页拉取。登录态变化时失效。 */
+    private var purchasedSongsCache: List<Track>? = null
+    private var purchasedAlbumsCache: List<Album>? = null
+
     /** 登录/登出后调用，让 [account] 立刻反映最新登录态，不读短缓存。 */
     fun invalidateAccount() {
         cachedAccount = null
+        purchasedSongsCache = null
+        purchasedAlbumsCache = null
     }
 
     private companion object {
@@ -103,7 +109,11 @@ class ProfileRepository @Inject constructor(
     private suspend fun fetchAccount(): Account? {
         val r = gateway.call(NeteaseOp.USER_ACCOUNT)
         // 明确未登录（301）时清缓存，让 UI 回落到未登录；网络错误保留旧缓存。
-        if (r.code == 301) cachedProfile = null
+        if (r.code == 301) {
+            cachedProfile = null
+            purchasedSongsCache = null
+            purchasedAlbumsCache = null
+        }
         if (r.err != 0 || r.code != 200) return null
         return try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
@@ -149,8 +159,9 @@ class ProfileRepository @Inject constructor(
         songDetails(ids).also { likedCache[uid.toString()] = it }
     }
 
-    /** Purchased single tracks (/api/single/mybought/song/list). 分页拉全，避免上限 100。 */
+    /** Purchased single tracks (/api/single/mybought/song/list). 分页拉全，避免上限 100。结果内存缓存。 */
     suspend fun purchasedSongs(): List<Track> = withContext(Dispatchers.IO) {
+        purchasedSongsCache?.let { return@withContext it }
         val all = mutableListOf<Track>()
         var offset = 0
         while (true) {
@@ -161,6 +172,7 @@ class ProfileRepository @Inject constructor(
         }
         if (all.isNotEmpty()) {
             diag("purchasedSongs complete offset=$offset total=${all.size}")
+            purchasedSongsCache = all
         }
         all
     }
@@ -202,8 +214,9 @@ class ProfileRepository @Inject constructor(
         }
     }
 
-    /** Purchased digital albums (/api/digitalAlbum/purchased). 分页拉全，避免上限 100。 */
+    /** Purchased digital albums (/api/digitalAlbum/purchased). 分页拉全，避免上限 100。结果内存缓存。 */
     suspend fun purchasedAlbums(): List<Album> = withContext(Dispatchers.IO) {
+        purchasedAlbumsCache?.let { return@withContext it }
         val all = mutableListOf<Album>()
         var offset = 0
         while (true) {
@@ -214,6 +227,7 @@ class ProfileRepository @Inject constructor(
         }
         if (all.isNotEmpty()) {
             diag("purchasedAlbums complete offset=$offset total=${all.size}")
+            purchasedAlbumsCache = all
         }
         all
     }

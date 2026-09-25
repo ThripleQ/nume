@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -92,6 +93,13 @@ fun HomeScreen(
     LaunchedEffect(shellOpen) { onShellOpenChange(shellOpen) }
     DisposableEffect(Unit) { onDispose { onShellOpenChange(false) } }
 
+    // 稳定的回调：开/关壳只改 expand，若 lambda 每次重组都新建会把整页列表（HomeContent）
+    // 一起重组，产生尖峰帧。用 remember 固定后 expand 变化不会再重组底下列表。
+    val onPlay = remember(vm) { vm::onPlayTrack }
+    val onRefresh = remember(vm) { { vm.load() } }
+    val onExpand = remember { { t: ExpandTarget -> expand = t } }
+    val onDismiss = remember { { expand = null } }
+
     Box(Modifier.fillMaxSize()) {
         when (val s = state) {
             HomeUiState.Loading -> HomeSkeleton(bottomPadding = islandClearance + 16.dp)
@@ -99,16 +107,16 @@ fun HomeScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("加载失败，请检查网络", color = MaterialTheme.colorScheme.onSurface)
                     Spacer(Modifier.height(12.dp))
-                    TextButton(onClick = vm::load) { Text("重试") }
+                    TextButton(onClick = onRefresh) { Text("重试") }
                 }
             }
             is HomeUiState.Ready -> HomeContent(
                 data = s,
                 bottomPadding = islandClearance + 16.dp,
-                onPlay = vm::onPlayTrack,
-                onExpand = { expand = it },
+                onPlay = onPlay,
+                onExpand = onExpand,
                 onWebLogin = onWebLogin,
-                onRefresh = vm::load,
+                onRefresh = onRefresh,
             )
         }
 
@@ -117,7 +125,7 @@ fun HomeScreen(
                 target = target,
                 bottomPadding = islandClearance + 16.dp,
                 onOpenPlayer = onOpenPlayer,
-                onDismiss = { expand = null },
+                onDismiss = onDismiss,
             )
         }
     }
@@ -380,7 +388,8 @@ private fun LoginPrompt(onLogin: () -> Unit) {
 }
 
 /** 大封面卡 → 全屏列表：从卡片位置伸展；封面是列表第一项（banner 头），随列表滚动移出。
- *  contentFromStart：内容从头可见，p=0 时方形封面恰好等于卡片、随壳生长，收起精确缩回。 */
+ *  内容走「固定终态排版 + 壳裁剪露出」以免每帧重排列表；首尾与卡片的对齐由 hero 封面覆盖层
+ *  （[ExpandableShell.heroContent]）恢复——p=0 时 hero 恰好等于卡片，p=1 时与 banner 封面重合。 */
 @Composable
 private fun HomeExpandShell(
     target: ExpandTarget,
@@ -390,12 +399,27 @@ private fun HomeExpandShell(
 ) {
     val density = LocalDensity.current
     val statusBarTopPx = with(density) { WindowInsets.statusBars.getTop(this).toFloat() }
+    // hero 的终态矩形直接用「预测值」：16dp 内缩、方形、内容顶（状态栏下 + 4dp 内边距）下方，
+    // 与 TrackListBannerHeader 的封面同位。不再每帧测量回写（省掉每帧 onGloballyPositioned）。
+    val coverSidePx = LocalConfiguration.current.screenWidthDp * density.density -
+        with(density) { 32.dp.toPx() }
+    val coverLeftPx = with(density) { 16.dp.toPx() }
+    val coverTopPx = statusBarTopPx + with(density) { 4.dp.toPx() }
+    val coverRect = remember {
+        mutableStateOf<Rect?>(
+            Rect(coverLeftPx, coverTopPx, coverLeftPx + coverSidePx, coverTopPx + coverSidePx),
+        )
+    }
+    val coverReady = remember { mutableStateOf(false) }
     ExpandableShell(
         fromRect = target.rect,
         fullTopPx = statusBarTopPx,
         shapeCornerDp = 16.dp,
         containerColor = MaterialTheme.colorScheme.surface,
-        contentFromStart = true,
+        contentFromStart = false,
+        heroTargetRect = coverRect,
+        heroReady = coverReady,
+        heroContent = { BigCoverVisual(target.coverUrl, target.title, Modifier.fillMaxSize()) },
         onDismiss = onDismiss,
         header = {},
         content = {
@@ -407,6 +431,10 @@ private fun HomeExpandShell(
                     onBack = onDismiss,
                     onOpenPlayer = onOpenPlayer,
                     showTopBar = false,
+                    // 封面内缩用常量（不随壳每帧重排 banner/LazyColumn）——封面形变交给 hero。
+                    coverInsetFollowsShell = false,
+                    onCoverReady = { coverReady.value = true },
+                    previewCoverUrl = target.coverUrl,
                     bottomPadding = bottomPadding,
                 )
                 // 关闭按钮：浮在左上、不随列表滚，随展开进度淡入（p=0 不可见、不响应点击）。

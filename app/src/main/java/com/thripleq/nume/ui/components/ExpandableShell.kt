@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeight
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -23,8 +25,10 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Rect
@@ -39,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import kotlin.math.roundToInt
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -49,6 +54,15 @@ import kotlinx.coroutines.launch
  */
 val LocalShellProgress: androidx.compose.runtime.ProvidableCompositionLocal<State<Float>> =
     staticCompositionLocalOf { mutableStateOf(1f) }
+
+/**
+ * 壳的**打开动画是否已结束**（[State]，只在需要时读取）。内容可借此把「加载/组合重列表」推迟到
+ * 动画之后，避免动画期间组合列表造成尖峰帧。首个值在动画完成后翻 true。
+ *
+ * 非壳环境（直接使用 [TrackListScreen] 的页面）默认恒 true，因此立即加载。
+ */
+val LocalShellSettled: androidx.compose.runtime.ProvidableCompositionLocal<State<Boolean>> =
+    staticCompositionLocalOf { mutableStateOf(true) }
 
 /**
  * 水平内缩随壳展开进度收缩：语义等价于 `padding(horizontal = maxInset * progress)`，
@@ -93,6 +107,17 @@ fun Modifier.shellInset(progress: State<Float>, maxInset: Dp): Modifier =
  *                 让内容自身的第一项（如全宽封面）在 p=0 时恰好等于起点卡片、随壳生长；
  *                 header 槽不渲染，[recessedBottom] 也忽略（改由内容自行留底部空间）。
  *                 用于「大封面折进列表」——封面是列表第一项、随滚动移出。
+ * @param heroTargetRect 内容首项（封面）的**窗口坐标**终态矩形（[State]，只在 layout/draw 阶段读取，
+ *                 不订阅重组）。提供且 [contentFromStart] 为 false 时，在壳内叠加一张 hero 封面：
+ *                 几何从起点胶囊矩形插值到该矩形，透明度与内容互补（内容淡入则 hero 淡出）。用于
+ *                 「内容固定终态排版 + 壳裁剪」路径下恢复首尾与父级卡片的无缝对齐——p=0 时 hero
+ *                 恰好等于卡片，p=1 时与内容里的 banner 封面重合。
+ * @param heroReady     高清封面是否已绘制出来（[State]，只在 layout/draw 阶段读取）。为 true 时 hero
+ *                      原地渐变淡出、交接给内容里的高清封面；为 false（数据/图片未到）时 hero 一直顶着。
+ * @param heroContent   hero 覆盖层内容（通常与起点卡片封面同源）。null 则不绘制 hero。
+ * @param heroCornerDp  hero 圆角（四角）。壳只圆顶角、底角是直角，hero 必须自带四角圆角，
+ *                      否则 p=0 时底角与卡片对不上；应等于起点卡片/终态封面的圆角。
+ * @param heroBlurDp    hero 未被交接时的模糊半径：低清封面被放大铺满，模糊可掩盖像素化。
  * @param onDismiss 关闭动画完全结束、壳复位后才回调（调用方借此移除本组件）
  * @param header    壳顶部标题栏（必须与胶囊头部同源）；接收 [onClose]，收起按钮应调它触发关闭动画。
  *                  [contentFromStart] 为 true 时不渲染。
@@ -107,6 +132,11 @@ fun ExpandableShell(
     recessedBottom: Dp = 0.dp,
     progress: Float? = null,
     contentFromStart: Boolean = false,
+    heroTargetRect: State<Rect?>? = null,
+    heroReady: State<Boolean>? = null,
+    heroContent: (@Composable () -> Unit)? = null,
+    heroCornerDp: Dp = 16.dp,
+    heroBlurDp: Dp = 16.dp,
     onDismiss: () -> Unit,
     header: @Composable (onClose: () -> Unit) -> Unit,
     content: @Composable () -> Unit,
@@ -114,6 +144,8 @@ fun ExpandableShell(
     val density = LocalDensity.current
     var viewWidth by remember { mutableStateOf(0) }
     var viewHeight by remember { mutableStateOf(0) }
+    // 非 contentFromStart：header 的实际高度，用于给内容区算固定的终态高度。
+    var headerHeightPx by remember { mutableStateOf(0) }
 
     // 起点（胶囊）几何，兜底 16dp 边距 + 328dp 宽。
     val capsuleLeft = fromRect?.left ?: with(density) { 16.dp.toPx() }
@@ -130,7 +162,8 @@ fun ExpandableShell(
     var closing by remember { mutableStateOf(false) }
     val vertical = remember { Animatable(0f) }
     val horizontal = remember { Animatable(0f) }
-    val contentAlpha = remember { Animatable(0f) }
+    // Hero 透明度：1 = 低清 hero 顶着，0 = 已交接给高清封面。
+    val heroAlpha = remember { Animatable(1f) }
     // 暴露给内容的只读进度 State（Animatable 本身不是 State，用 derivedStateOf 包一层）。
     val horizontalState = remember { derivedStateOf { horizontal.value } }
 
@@ -138,22 +171,23 @@ fun ExpandableShell(
     // 关闭动画从当前进度续跑；打开动画仅在无外部进度时自动跑。
     val followProgress = progress != null
     var hasFollowed by remember { mutableStateOf(false) }
+    // 打开动画是否结束（供内容把重加载推迟到动画之后）。
+    val settled = remember { mutableStateOf(false) }
     LaunchedEffect(progress) {
         if (progress != null) {
             hasFollowed = true
             vertical.snapTo(progress)
             horizontal.snapTo(progress)
-            contentAlpha.snapTo(progress)
-        } else {
+            settled.value = true
+        } else if (hasFollowed) {
             // 从跟手态定格（progress→null）：从当前进度续跑打开动画到全屏。
-            // 未经历跟手（点击直接打开）时忽略，走下方默认打开动画。
-            if (hasFollowed && !closing && (vertical.value < 1f || horizontal.value < 1f)) {
+            if (!closing && (vertical.value < 1f || horizontal.value < 1f)) {
                 coroutineScope {
                     launch { vertical.animateTo(1f, tween(320, easing = FastOutSlowInEasing)) }
                     launch { horizontal.animateTo(1f, tween(280, easing = FastOutSlowInEasing)) }
-                    launch { contentAlpha.animateTo(1f, tween(240, delayMillis = 60)) }
                 }
             }
+            settled.value = true
         }
     }
 
@@ -163,7 +197,23 @@ fun ExpandableShell(
             coroutineScope {
                 launch { vertical.animateTo(1f, tween(380, easing = FastOutSlowInEasing)) }
                 launch { horizontal.animateTo(1f, tween(320, easing = FastOutSlowInEasing)) }
-                launch { contentAlpha.animateTo(1f, tween(300, delayMillis = 80)) }
+            }
+            settled.value = true
+        }
+    }
+
+    // Hero 交接：高清封面就绪、且壳已基本展开后，hero 原地渐变淡出（数据没到就一直顶着，
+    // 不查“加载状态”，只看封面是否已绘制出来）。关闭时立刻收回 hero，让收起尾帧仍能精确缩回卡片。
+    // 等壳展开再淡出很关键：否则高清封面若本来就绪，hero 会在展开初期就消失，露出固定排版的
+    // 裁切内容（看起来像没优化）。
+    val ready = heroReady?.value == true
+    LaunchedEffect(ready, closing) {
+        when {
+            closing -> heroAlpha.snapTo(1f)
+            !ready -> Unit
+            else -> {
+                snapshotFlow { horizontal.value }.first { it >= 0.98f }
+                heroAlpha.animateTo(0f, tween(220))
             }
         }
     }
@@ -174,12 +224,10 @@ fun ExpandableShell(
     }
     LaunchedEffect(closing) {
         if (closing) {
-            // 关闭：横向收窄与竖向缩回并发展开，内容延后到收缩中后段再淡出——
-            // 太早淡掉会让列表在壳还没缩小时就消失，观感"内容先走、壳再走"。
+            // 关闭：横向收窄与竖向缩回并发展开。
             coroutineScope {
                 launch { horizontal.animateTo(0f, tween(240, easing = FastOutSlowInEasing)) }
                 launch { vertical.animateTo(0f, tween(380, easing = FastOutSlowInEasing)) }
-                launch { contentAlpha.animateTo(0f, tween(180, delayMillis = 140)) }
             }
             // animateTo 返回时值已到位，但该值的画面还要等重组+绘制才落地；
             // 立即 onDismiss 会把最后一帧跳过，壳停在 vertical≈0 处（偏上）。
@@ -192,7 +240,7 @@ fun ExpandableShell(
 
     BackHandler { startClose() }
 
-    // 注意：动画值（horizontal / vertical / contentAlpha）一律不在组合阶段读取，
+    // 注意：动画值（horizontal / vertical / heroAlpha）一律不在组合阶段读取，
     // 只在 layout / draw 的 lambda 里读——否则每帧都会重组整个 ExpandableShell
     // （含内容子树：列表/网格），这是胶囊壳展开卡顿的主因。
     // 启动动画的 LaunchedEffect 不依赖这些值，读值下沉不影响动画本身。
@@ -260,23 +308,81 @@ fun ExpandableShell(
                 // 把关闭动画触发器传给 slot：收起按钮调它走完整关闭动画，而不是直接移除壳。
                 // contentFromStart 时无独立 header（封面本身是内容的第一项）。
                 if (!contentFromStart) {
-                    header(::startClose)
+                    Box(Modifier.onSizeChanged { headerHeightPx = it.height }) {
+                        header(::startClose)
+                    }
                 }
-                // 内容区：占剩余空间，alpha 随动画淡入（contentFromStart 时恒 1）。
-                // 底部让位 recessedBottom：内容区（窟窿）底部留出高度露出底下导航岛，与岛融合。
-                Box(
+                // 内容区：
+                // - contentFromStart：随壳重排（封面从卡片尺寸生长），用 weight 占剩余空间。
+                // - 否则：按终态尺寸（全宽 × 屏高-header-内边距）固定排版一次。内容约束在动画
+                //   期间不变，Compose 会跳过 measure（OuterMeasurablePlaceable 同约束缓存），
+                //   于是列表/网格每帧零重排；水平再用 -shellLeft 抵消壳平移，使内容在屏幕上
+                //   静止，只由壳的裁剪窗口逐步露出。alpha 仍在 draw 阶段读。
+                val contentModifier = if (contentFromStart) {
+                    Modifier.weight(1f).fillMaxWidth()
+                } else {
+                    val vPadPx = with(density) { 8.dp.toPx() }
+                    val fixedHeightPx =
+                        (viewHeight - fullTopPx - headerHeightPx - vPadPx).coerceAtLeast(0f)
                     Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
+                        .requiredWidth(with(density) { viewWidth.toDp() })
+                        .requiredHeight(with(density) { fixedHeightPx.toDp() })
+                }
+                Box(
+                    contentModifier
                         .padding(bottom = if (contentFromStart) 0.dp else recessedBottom)
-                        // alpha 在 draw 阶段读取，不触发重组。
-                        .graphicsLayer { alpha = if (contentFromStart) 1f else contentAlpha.value },
+                        .graphicsLayer {
+                            // 内容恒不透明：hero 原地淡出即可露出内容，无需与内容交叉淡入
+                            // （因此也不依赖内容是否加载完成——骨架/列表都一样）。
+                            if (!contentFromStart) {
+                                translationX = -lerp(capsuleLeft, fullLeft, horizontal.value)
+                            }
+                        },
                     content = {
-                        CompositionLocalProvider(LocalShellProgress provides horizontalState) {
+                        CompositionLocalProvider(
+                            LocalShellProgress provides horizontalState,
+                            LocalShellSettled provides settled,
+                        ) {
                             content()
                         }
                     },
                 )
+            }
+
+            // Hero 封面：固定排版路径下恢复首尾对齐。
+            // 起点 = 胶囊矩形（壳局部坐标 (0,0,capsuleW,capsuleH)），终点 = heroTargetRect 换算到
+            // **壳局部坐标**（窗口矩形 - 壳绘制原点；壳原点随动画移动，相减后终点恒定）。
+            // 几何在 layout 阶段读动画值，不触发重组；透明度与内容互补（内容淡入则 hero 淡出）。
+            if (!contentFromStart && heroContent != null) {
+                Box(
+                    Modifier
+                        .layout { measurable, _ ->
+                            val target = heroTargetRect?.value
+                            val tW = target?.width ?: capsuleWidthPx
+                            val tH = target?.height ?: capsuleHeightPx
+                            val w = lerp(capsuleWidthPx, tW, horizontal.value)
+                                .roundToInt().coerceAtLeast(0)
+                            val h = lerp(capsuleHeightPx, tH, vertical.value)
+                                .roundToInt().coerceAtLeast(0)
+                            val placeable = measurable.measure(Constraints.fixed(w, h))
+                            layout(w, h) { placeable.place(0, 0) }
+                        }
+                        .graphicsLayer {
+                            val shellLeftNow = lerp(capsuleLeft, fullLeft, horizontal.value)
+                            val shellTopNow = lerp(capsuleTop, fullTop, vertical.value)
+                            val target = heroTargetRect?.value
+                            // 终点在壳局部坐标：窗口坐标 - 壳绘制原点（相减后终点不随壳移动）。
+                            val targetLeft = (target?.left ?: capsuleLeft) - shellLeftNow
+                            val targetTop = (target?.top ?: capsuleTop) - shellTopNow
+                            translationX = lerp(0f, targetLeft, horizontal.value)
+                            translationY = lerp(0f, targetTop, vertical.value)
+                            alpha = heroAlpha.value
+                        }
+                        // 未交接时模糊（低清封面放大铺满，模糊掩盖像素化）；就绪后归零。
+                        .blur(if (ready) 0.dp else heroBlurDp)
+                        // 壳只圆顶角，hero 自带四角圆角才能与卡片/终态封面吻合。
+                        .clip(RoundedCornerShape(heroCornerDp)),
+                ) { heroContent() }
             }
         }
     }

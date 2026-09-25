@@ -2,6 +2,8 @@ package com.thripleq.nume.ui.screens
 
 import android.content.Context
 import android.widget.Toast
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -35,11 +37,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -49,6 +55,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.toSize
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.rememberAsyncImagePainter
@@ -57,6 +64,7 @@ import com.thripleq.nume.core.repo.Track
 import com.thripleq.nume.core.repo.TrackCollection
 import com.thripleq.nume.ui.components.BigCoverVisual
 import com.thripleq.nume.ui.components.LocalShellProgress
+import com.thripleq.nume.ui.components.LocalShellSettled
 import com.thripleq.nume.ui.components.ShimmerImagePlaceholder
 import com.thripleq.nume.ui.components.SkeletonBox
 import com.thripleq.nume.ui.components.SkeletonLine
@@ -67,6 +75,7 @@ import com.thripleq.nume.ui.profile.TrackListSource
 import com.thripleq.nume.ui.profile.TrackListUiState
 import com.thripleq.nume.ui.profile.TrackListViewModel
 import java.util.Locale
+import kotlinx.coroutines.flow.first
 
 /**
  * 统一"壳子 + 列表"详情页：榜单 / 歌单 / 专辑 / 喜欢 / 已购都是同一个结构——
@@ -83,6 +92,22 @@ fun TrackListScreen(
     showTopBar: Boolean = true,
     /** 封面是否显示集合名；调用方已在顶栏/壳顶标题栏显示标题时可传 false 避免重复。 */
     showName: Boolean = true,
+    /**
+     * 封面左右内缩是否跟随壳展开进度。true：封面随壳重排生长（contentFromStart 路径）。
+     * false：用常量 16dp 内缩——配合 ExpandableShell 的固定终态排版，使列表 measure 在
+     * 动画期间可被跳过（Profile 胶囊面板）。
+     */
+    coverInsetFollowsShell: Boolean = true,
+    /** 回调 banner 封面的窗口坐标矩形（供 ExpandableShell hero 覆盖层做终点对齐）。 */
+    onCoverRect: ((Rect) -> Unit)? = null,
+    /** 高清 banner 封面加载成功时回调（供 hero 交接：hero 渐变淡出）。 */
+    onCoverReady: (() -> Unit)? = null,
+    /**
+     * 加载阶段用于「先画封面」的封面 URL（通常由入口卡片传入，与终态 banner 同源）。
+     * 非空时骨架屏不显示灰封面，而是立刻请求高清封面 + 显示 shimmer 行——这样 banner 封面
+     * 不必等整张列表（含分页补全）下载完才开始加载，hero 也能尽早交接。
+     */
+    previewCoverUrl: String? = null,
     bottomPadding: Dp = 16.dp,
 ) {
     val vm: TrackListViewModel = hiltViewModel()
@@ -96,7 +121,15 @@ fun TrackListScreen(
     val actionsOffscreen by remember { derivedStateOf { actionsTop < actionsThresholdPx } }
     LaunchedEffect(actionsOffscreen) { onActionsOffscreen(actionsOffscreen) }
 
-    LaunchedEffect(source, id) { vm.load(src, id, title) }
+    // 壳展开动画结束前既不加载也不组合列表：动画期间只留骨架（封面由 previewCoverUrl 提前画），
+    // 把「首次组合长列表 + 文本排版」的开销挪到动画之后，避免动画掉帧。非壳环境默认立即就绪。
+    val shellSettled = LocalShellSettled.current
+    var contentReady by remember { mutableStateOf(false) }
+    LaunchedEffect(source, id) {
+        if (!shellSettled.value) snapshotFlow { shellSettled.value }.first { it }
+        contentReady = true
+        vm.load(src, id, title)
+    }
     LaunchedEffect(Unit) { vm.openPlayer.collect { onOpenPlayer() } }
 
     // 数据到了直接显示列表（不预载封面：滚动到哪张就单张串行下载）。
@@ -124,38 +157,58 @@ fun TrackListScreen(
                 )
             }
         }
-        if (collection != null) {
-            // 统一 banner 头：封面是列表第一项（左右 16dp 内缩、随滚动移出），元信息叠在封面里；
-            // 列表行同样 16dp 内缩，与封面同宽。所有列表（榜单/歌单/专辑/喜欢/已购）共用此形态。
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(
-                    start = 0.dp,
-                    top = if (showTopBar) 8.dp else 0.dp,
-                    end = 0.dp,
-                    bottom = bottomPadding,
-                ),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                item(key = "header") {
-                    TrackListBannerHeader(collection, vm, showName) { actionsTop = it }
-                }
-                itemsIndexed(
-                    collection.tracks,
-                    key = { _, t -> t.id },
-                    contentType = { _, _ -> "track" },
-                ) { index, track ->
-                    TrackRow(index, track, hPadding = 16.dp) {
-                        vm.onTrackClick(collection, index)
+        // 内容目标态：数据到达且壳动画结束后才切到列表；其余为骨架/空/错误。
+        // 用 Crossfade 交叉淡化，避免「骨架 → 列表」硬切造成的闪现感。两态封面同位同源
+        // （Home 骨架用 previewCoverUrl = 终态 banner 封面），淡化期间封面视觉无缝，
+        // 因此不会破坏 ExpandableShell 的 hero 交接对齐。
+        val display: Any = when {
+            collection != null && contentReady -> collection
+            state is TrackListUiState.Empty -> TrackListUiState.Empty
+            state is TrackListUiState.Error -> TrackListUiState.Error
+            else -> TrackListUiState.Loading
+        }
+        Crossfade(
+            targetState = display,
+            animationSpec = tween(260),
+            label = "trackListContent",
+        ) { target ->
+            when (target) {
+                is TrackCollection -> LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(
+                        start = 0.dp,
+                        top = if (showTopBar) 8.dp else 0.dp,
+                        end = 0.dp,
+                        bottom = bottomPadding,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    // 统一 banner 头：封面是列表第一项（左右 16dp 内缩、随滚动移出），元信息叠在封面里；
+                    // 列表行同样 16dp 内缩，与封面同宽。所有列表（榜单/歌单/专辑/喜欢/已购）共用此形态。
+                    item(key = "header") {
+                        TrackListBannerHeader(target, vm, showName, coverInsetFollowsShell, onCoverRect, onCoverReady) { actionsTop = it }
+                    }
+                    itemsIndexed(
+                        target.tracks,
+                        key = { _, t -> t.id },
+                        contentType = { _, _ -> "track" },
+                    ) { index, track ->
+                        TrackRow(index, track, hPadding = 16.dp) {
+                            vm.onTrackClick(target, index)
+                        }
                     }
                 }
-            }
-        } else {
-            when (state) {
                 TrackListUiState.Empty -> CenteredHint("暂无曲目", MaterialTheme.colorScheme.onSurfaceVariant)
                 TrackListUiState.Error -> CenteredHint("曲目加载失败", MaterialTheme.colorScheme.error)
-                else -> TrackListSkeleton(showTopBar)
+                else -> TrackListSkeleton(
+                    showTopBar = showTopBar,
+                    coverInsetFollowsShell = coverInsetFollowsShell,
+                    coverUrl = previewCoverUrl,
+                    title = title,
+                    onCoverRect = onCoverRect,
+                    onCoverReady = onCoverReady,
+                )
             }
         }
     }
@@ -170,33 +223,74 @@ private fun CenteredHint(text: String, color: Color) {
 
 /**
  * 列表骨架：与 banner 头同构——方形封面（内缩量同真实头，随壳展开进度收起）+ 居中三按钮 + 曲目行。
- * 微光由根 Column 的 `shimmer()` 统一提供。
+ *
+ * [coverUrl] 非空时封面位置直接渲染**真实高清封面**（不再等整张列表），其余仍 shimmer——
+ * 这样 banner 封面与整表下载解耦，hero 能尽早交接。封面块**不能**包在 shimmer 容器里，
+ * 否则扫光会扫到真封面；故此时 shimmer 只挂在下方按钮/行。
  */
 @Composable
-private fun TrackListSkeleton(showTopBar: Boolean) {
+private fun TrackListSkeleton(
+    showTopBar: Boolean,
+    coverInsetFollowsShell: Boolean = true,
+    coverUrl: String? = null,
+    title: String = "",
+    onCoverRect: ((Rect) -> Unit)? = null,
+    onCoverReady: (() -> Unit)? = null,
+) {
     val progress = LocalShellProgress.current
     Column(
         Modifier
             .fillMaxSize()
-            .shimmer()
+            .then(if (coverUrl == null) Modifier.shimmer() else Modifier)
             .padding(top = if (showTopBar) 8.dp else 0.dp),
     ) {
-        SkeletonBox(
+        val coverModifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (coverInsetFollowsShell) Modifier.shellInset(progress, 16.dp)
+                else Modifier.padding(horizontal = 16.dp),
+            )
+            .aspectRatio(1f)
+        if (coverUrl != null) {
+            Box(
+                coverModifier
+                    .then(
+                        if (onCoverRect != null) {
+                            Modifier.onGloballyPositioned {
+                                onCoverRect.invoke(Rect(it.localToWindow(Offset.Zero), it.size.toSize()))
+                            }
+                        } else {
+                            Modifier
+                        },
+                    )
+                    .clip(RoundedCornerShape(16.dp)),
+            ) {
+                BigCoverVisual(
+                    coverUrl = coverUrl,
+                    name = title,
+                    modifier = Modifier.fillMaxSize(),
+                    requestSize = 1024,
+                    onLoadSuccess = onCoverReady,
+                )
+            }
+        } else {
+            SkeletonBox(coverModifier, RoundedCornerShape(16.dp))
+        }
+        Column(
             Modifier
                 .fillMaxWidth()
-                .shellInset(progress, 16.dp)
-                .aspectRatio(1f),
-            RoundedCornerShape(16.dp),
-        )
-        Spacer(Modifier.height(12.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                .then(if (coverUrl != null) Modifier.shimmer() else Modifier),
         ) {
-            repeat(3) { SkeletonBox(Modifier.width(96.dp).height(40.dp), RoundedCornerShape(percent = 50)) }
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+            ) {
+                repeat(3) { SkeletonBox(Modifier.width(96.dp).height(40.dp), RoundedCornerShape(percent = 50)) }
+            }
+            Spacer(Modifier.height(12.dp))
+            repeat(6) { SkeletonTrackRow() }
         }
-        Spacer(Modifier.height(12.dp))
-        repeat(6) { SkeletonTrackRow() }
     }
 }
 
@@ -230,6 +324,9 @@ private fun TrackListBannerHeader(
     collection: TrackCollection,
     vm: TrackListViewModel,
     showName: Boolean = true,
+    coverInsetFollowsShell: Boolean = true,
+    onCoverRect: ((Rect) -> Unit)? = null,
+    onCoverReady: (() -> Unit)? = null,
     onActionsTop: (Float) -> Unit,
 ) {
     val context = LocalContext.current.applicationContext
@@ -244,8 +341,21 @@ private fun TrackListBannerHeader(
         Box(
             Modifier
                 .fillMaxWidth()
-                .shellInset(progress, 16.dp)
+                .then(
+                    if (coverInsetFollowsShell) Modifier.shellInset(progress, 16.dp)
+                    else Modifier.padding(horizontal = 16.dp),
+                )
                 .aspectRatio(1f)
+                .then(
+                    // 仅需要测量终态矩形时才挂 onGloballyPositioned：否则动画期间它是每帧回调。
+                    if (onCoverRect != null) {
+                        Modifier.onGloballyPositioned {
+                            onCoverRect.invoke(Rect(it.localToWindow(Offset.Zero), it.size.toSize()))
+                        }
+                    } else {
+                        Modifier
+                    },
+                )
                 .clip(RoundedCornerShape(16.dp)),
         ) {
             BigCoverVisual(
@@ -256,6 +366,8 @@ private fun TrackListBannerHeader(
                 showName = showName,
                 scrimTop = 0.35f,
                 scrimAlpha = 0.85f,
+                requestSize = 1024,
+                onLoadSuccess = onCoverReady,
             )
         }
         Spacer(Modifier.height(12.dp))
