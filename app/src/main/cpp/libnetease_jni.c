@@ -9,15 +9,14 @@
  *     jumps over JNI to the Kotlin singleton NumeTransport.httpRequest(...),
  *     which runs OkHttp synchronously and returns status/body/Set-Cookie.
  *   - Kotlin talks back into the library through the three NumeNative methods
- *     bound below (setCookieFile / setApiBase / request). The request layer is
- *     process-global, so the Kotlin NetEaseGateway serializes every call on a
- *     single dispatcher (see the thread contract in netease/request.h).
+ *     bound below (setCookieFile / setApiBase / request). The cookie jar is
+ *     internally mutex-guarded (see the thread contract in netease/request.h),
+ *     so multiple request threads can drive the library concurrently.
  */
 #include <jni.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "netease/cookiejar.h"
 #include "netease/http.h"
 #include "netease/request.h"
 #include "netease/services.h"
@@ -231,14 +230,12 @@ static void native_set_api_base(JNIEnv *env, jobject thiz, jstring base) {
 
 /* Merge a browser-exported cookie string ("MUSIC_U=xxx; __csrf=yyy; ...")
  * into the global jar and persist it to the cookie file, so the next process
- * start reloads the login state. Runs under NetEaseGateway's single lock. */
+ * start reloads the login state. Uses the library's thread-safe import, so it
+ * is safe to run concurrently with in-flight requests. */
 static void native_import_cookies(JNIEnv *env, jobject thiz, jstring cookieStr) {
     char *s = copy_jstring(env, cookieStr);
     if (!s) return;
-    ne_jar *jar = ne_global_jar();
-    ne_jar_merge_cookie_str(jar, s);
-    const char *path = ne_cookie_file();
-    if (path && *path) ne_jar_save_file(jar, path);
+    ne_jar_import_cookies(s);
     free(s);
 }
 
