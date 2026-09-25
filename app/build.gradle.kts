@@ -116,6 +116,19 @@ dependencies {
     // shimmer placeholders (skeleton loading)
     implementation(libs.compose.shimmer)
 
+    // frame-jank telemetry (JankStats; logs in debug, hook for prod reporting)
+    implementation(libs.androidx.metrics.performance)
+
+    // cold-start splash (back-ports the Android 12 splash to API 26+)
+    implementation(libs.androidx.core.splashscreen)
+
+    // HTTP logging (activated only in debug via BuildConfig.DEBUG; must be on all
+    // variants because NumeTransport in :main references it)
+    implementation(libs.okhttp.logging.interceptor)
+
+    // debug-only diagnostics (auto-installed via its own ContentProvider)
+    debugImplementation(libs.leakcanary)
+
     // dependency injection (Hilt)
     implementation(libs.dagger.hilt.android)
     ksp(libs.dagger.hilt.compiler)
@@ -127,4 +140,11 @@ dependencies {
 
     // Baseline Profile generation (macrobenchmark driven; see :baselineprofile).
     baselineProfile(project(":baselineprofile"))
+}
+
+// Emit Compose compiler stability/skippability reports + metrics into build/ for
+// perf analysis (which composables are restartable/skippable, which classes are unstable).
+composeCompiler {
+    reportsDestination = layout.buildDirectory.dir("compose-reports")
+    metricsDestination = layout.buildDirectory.dir("compose-metrics")
 }
