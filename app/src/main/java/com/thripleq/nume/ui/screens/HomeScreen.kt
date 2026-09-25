@@ -1,5 +1,6 @@
 package com.thripleq.nume.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -56,12 +57,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.compose.AsyncImage
+import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
 import com.thripleq.nume.core.repo.Track
 import com.thripleq.nume.ui.components.BigCoverVisual
 import com.thripleq.nume.ui.components.ExpandableShell
 import com.thripleq.nume.ui.components.LocalShellProgress
+import com.thripleq.nume.ui.components.ShimmerImagePlaceholder
 import com.thripleq.nume.ui.components.SkeletonBox
 import com.thripleq.nume.ui.components.SkeletonLine
 import com.valentinilk.shimmer.shimmer
@@ -306,14 +308,10 @@ private fun SmallTrackRow(track: Track, onClick: () -> Unit) {
                 .clip(RoundedCornerShape(8.dp)),
         ) {
             if (model != null) {
-                Box(
-                    Modifier
-                        .matchParentSize()
-                        .shimmer()
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                )
-                AsyncImage(
-                    model = model,
+                val painter = rememberAsyncImagePainter(model)
+                ShimmerImagePlaceholder(painter, Modifier.matchParentSize())
+                Image(
+                    painter = painter,
                     contentDescription = track.name,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
@@ -412,7 +410,7 @@ private fun HomeExpandShell(
                     bottomPadding = bottomPadding,
                 )
                 // 关闭按钮：浮在左上、不随列表滚，随展开进度淡入（p=0 不可见、不响应点击）。
-                val p = LocalShellProgress.current
+                val p = LocalShellProgress.current.value
                 Box(
                     Modifier
                         .align(Alignment.TopStart)

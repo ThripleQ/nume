@@ -1,5 +1,6 @@
 package com.thripleq.nume.ui.components
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,9 +24,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
+import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
-import com.valentinilk.shimmer.shimmer
 
 /**
  * 封面 + 底部渐变遮罩 + 左下角名字（可选元信息）。
@@ -55,15 +55,11 @@ fun BigCoverVisual(
             coverUrl?.let { ImageRequest.Builder(context).data(it).size(480).build() }
         }
         if (model != null) {
-            // 占位微光：图片下载完不透明覆盖即隐藏。
-            Box(
-                Modifier
-                    .matchParentSize()
-                    .shimmer()
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-            )
-            AsyncImage(
-                model = model,
+            // 占位微光仅在加载中组合，加载完成即移除（不再常驻无限扫光）。
+            val painter = rememberAsyncImagePainter(model)
+            ShimmerImagePlaceholder(painter, Modifier.matchParentSize())
+            Image(
+                painter = painter,
                 contentDescription = name,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),

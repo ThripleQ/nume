@@ -12,6 +12,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.AnchoredDraggableState
@@ -124,13 +125,13 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import coil.compose.AsyncImage
+import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
-import com.valentinilk.shimmer.shimmer
 import com.thripleq.nume.Home
 import com.thripleq.nume.Profile
 import com.thripleq.nume.Search
 import com.thripleq.nume.core.playback.PlayerHolder
+import com.thripleq.nume.ui.components.ShimmerImagePlaceholder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -727,14 +728,10 @@ private fun PlayerBarContent(
                         .size(120)
                         .build()
                 }
-                Box(
-                    Modifier
-                        .matchParentSize()
-                        .shimmer()
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                )
-                AsyncImage(
-                    model = model,
+                val painter = rememberAsyncImagePainter(model)
+                ShimmerImagePlaceholder(painter, Modifier.matchParentSize())
+                Image(
+                    painter = painter,
                     contentDescription = playerState.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
@@ -1537,14 +1534,10 @@ private fun CoverArt(
             val model = remember(coverUrl, px) {
                 ImageRequest.Builder(context).data(coverUrl).size(px).build()
             }
-            Box(
-                Modifier
-                    .matchParentSize()
-                    .shimmer()
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-            )
-            AsyncImage(
-                model = model,
+            val painter = rememberAsyncImagePainter(model)
+            ShimmerImagePlaceholder(painter, Modifier.matchParentSize())
+            Image(
+                painter = painter,
                 contentDescription = state.title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),

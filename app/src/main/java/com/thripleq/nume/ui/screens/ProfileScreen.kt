@@ -1,10 +1,12 @@
 package com.thripleq.nume.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -15,6 +17,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -58,12 +64,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.compose.AsyncImage
+import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
 import com.thripleq.nume.core.repo.Account
 import com.thripleq.nume.core.repo.PlaylistSummary
 import com.thripleq.nume.core.repo.ProfileData
 import com.thripleq.nume.ui.components.ExpandableShell
+import com.thripleq.nume.ui.components.ShimmerImagePlaceholder
 import com.thripleq.nume.ui.components.SkeletonBox
 import com.thripleq.nume.ui.components.SkeletonLine
 import com.thripleq.nume.ui.profile.ProfileUiState
@@ -594,14 +601,10 @@ private fun UserCard(account: Account) {
                 val model = remember(account.avatarUrl) {
                     ImageRequest.Builder(context).data(account.avatarUrl).size(128).build()
                 }
-                Box(
-                    Modifier
-                        .matchParentSize()
-                        .shimmer()
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                )
-                AsyncImage(
-                    model = model,
+                val painter = rememberAsyncImagePainter(model)
+                ShimmerImagePlaceholder(painter, Modifier.matchParentSize())
+                Image(
+                    painter = painter,
                     contentDescription = account.nickname,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
@@ -741,7 +744,7 @@ private fun ProfilePanel.title(): String = when (this) {
     is ProfilePanel.Playlists -> title
 }
 
-/** 歌单网格面板内容：全屏可滚动网格，点格子进歌单曲目列表。 */
+/** 歌单网格面板内容：全屏懒加载网格，点格子进歌单曲目列表。 */
 @Composable
 private fun PlaylistGridPanel(
     title: String,
@@ -758,43 +761,28 @@ private fun PlaylistGridPanel(
         }
         return
     }
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+    // LazyVerticalGrid 自带滚动，不再外包一层 verticalScroll + 全量 Column：
+    // 歌单多时只组合可见格，避免每帧重排整棵树（胶囊壳展开卡顿的主因之一）。
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(
-            title,
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        Spacer(Modifier.height(12.dp))
-        PlaylistGrid(playlists) { id, name ->
-            onOpenTracks("playlist", id, name)
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
         }
-    }
-}
-
-@Composable
-private fun PlaylistGrid(
-    playlists: List<PlaylistSummary>,
-    onClick: (id: String, name: String) -> Unit,
-) {
-    // Non-lazy two-column grid: playlists are bounded in number, and a lazy
-    // grid must not nest inside the outer scrollable Column.
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        playlists.chunked(2).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                row.forEach { p ->
-                    PlaylistCell(
-                        playlist = p,
-                        onClick = { onClick(p.id, p.name) },
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                if (row.size == 1) Spacer(Modifier.weight(1f))
-            }
+        items(playlists, key = { it.id }) { p ->
+            PlaylistCell(
+                playlist = p,
+                onClick = { onOpenTracks("playlist", p.id, p.name) },
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }
@@ -821,14 +809,10 @@ private fun PlaylistCell(
                 }
             }
             if (model != null) {
-                Box(
-                    Modifier
-                        .matchParentSize()
-                        .shimmer()
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                )
-                AsyncImage(
-                    model = model,
+                val painter = rememberAsyncImagePainter(model)
+                ShimmerImagePlaceholder(painter, Modifier.matchParentSize())
+                Image(
+                    painter = painter,
                     contentDescription = playlist.name,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),

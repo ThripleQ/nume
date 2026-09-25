@@ -2,6 +2,7 @@ package com.thripleq.nume.ui.screens
 
 import android.content.Context
 import android.widget.Toast
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -50,12 +51,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.compose.AsyncImage
+import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
 import com.thripleq.nume.core.repo.Track
 import com.thripleq.nume.core.repo.TrackCollection
 import com.thripleq.nume.ui.components.BigCoverVisual
 import com.thripleq.nume.ui.components.LocalShellProgress
+import com.thripleq.nume.ui.components.ShimmerImagePlaceholder
 import com.thripleq.nume.ui.components.SkeletonBox
 import com.thripleq.nume.ui.components.SkeletonLine
 import com.thripleq.nume.ui.playerbar.CollectionActions
@@ -171,7 +173,7 @@ private fun CenteredHint(text: String, color: Color) {
  */
 @Composable
 private fun TrackListSkeleton(showTopBar: Boolean) {
-    val p = LocalShellProgress.current
+    val p = LocalShellProgress.current.value
     Column(
         Modifier
             .fillMaxSize()
@@ -230,7 +232,7 @@ private fun TrackListBannerHeader(
     onActionsTop: (Float) -> Unit,
 ) {
     val context = LocalContext.current.applicationContext
-    val p = LocalShellProgress.current
+    val p = LocalShellProgress.current.value
     val meta = listOfNotNull(
         collectionMetaLine(collection).takeIf { it.isNotBlank() },
         collection.updateFrequency.takeIf { it.isNotBlank() },
@@ -320,14 +322,10 @@ private fun TrackRow(index: Int, track: Track, hPadding: Dp = 8.dp, onClick: () 
                 .clip(RoundedCornerShape(8.dp)),
         ) {
             if (artwork != null) {
-                Box(
-                    Modifier
-                        .matchParentSize()
-                        .shimmer()
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                )
-                AsyncImage(
-                    model = artwork,
+                val painter = rememberAsyncImagePainter(artwork)
+                ShimmerImagePlaceholder(painter, Modifier.matchParentSize())
+                Image(
+                    painter = painter,
                     contentDescription = track.name,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),

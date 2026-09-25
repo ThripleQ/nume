@@ -1,6 +1,7 @@
 package com.thripleq.nume.ui.screens
 
 import android.net.Uri
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -31,8 +32,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.compose.AsyncImage
+import coil.compose.rememberAsyncImagePainter
 import com.thripleq.nume.core.repo.Chart
+import com.thripleq.nume.ui.components.ShimmerImagePlaceholder
 import com.thripleq.nume.ui.components.SkeletonBox
 import com.thripleq.nume.ui.components.SkeletonLine
 import com.thripleq.nume.ui.library.LibraryUiState
@@ -91,14 +93,10 @@ private fun ChartList(charts: List<Chart>, onChart: (Chart) -> Unit) {
                         .clip(RoundedCornerShape(8.dp)),
                 ) {
                     c.coverUrl?.let { url ->
-                        Box(
-                            Modifier
-                                .matchParentSize()
-                                .shimmer()
-                                .background(MaterialTheme.colorScheme.surfaceVariant),
-                        )
-                        AsyncImage(
-                            model = Uri.parse(url),
+                        val painter = rememberAsyncImagePainter(Uri.parse(url))
+                        ShimmerImagePlaceholder(painter, Modifier.matchParentSize())
+                        Image(
+                            painter = painter,
                             contentDescription = c.name,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize(),

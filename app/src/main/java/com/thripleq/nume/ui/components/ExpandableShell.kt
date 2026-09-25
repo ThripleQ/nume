@@ -11,12 +11,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.mutableStateOf
@@ -29,16 +30,25 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
+import kotlin.math.roundToInt
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
-/** 壳当前展开进度（0..1），供内容里的浮层（如关闭按钮）做淡入。 */
-val LocalShellProgress = staticCompositionLocalOf { 1f }
+/**
+ * 壳当前展开进度（0..1）的 [State]，供内容里的浮层（如关闭按钮、banner 内缩）读取。
+ *
+ * 刻意暴露 [State] 而非裸 Float：内容方在读 `value` 时可自行选择在**布局/绘制阶段**读取，
+ * 从而避免动画每帧触发整棵内容树重组。
+ */
+val LocalShellProgress: androidx.compose.runtime.ProvidableCompositionLocal<State<Float>> =
+    staticCompositionLocalOf { mutableStateOf(1f) }
 
 /**
  * 通用「胶囊壳 → 全屏面板」伸展覆盖层。
@@ -108,6 +118,8 @@ fun ExpandableShell(
     val vertical = remember { Animatable(0f) }
     val horizontal = remember { Animatable(0f) }
     val contentAlpha = remember { Animatable(0f) }
+    // 暴露给内容的只读进度 State（Animatable 本身不是 State，用 derivedStateOf 包一层）。
+    val horizontalState = remember { derivedStateOf { horizontal.value } }
 
     // 外部受控进度：跟手时直接驱动壳几何（snap），不受内部动画干扰。
     // 关闭动画从当前进度续跑；打开动画仅在无外部进度时自动跑。
@@ -167,12 +179,10 @@ fun ExpandableShell(
 
     BackHandler { startClose() }
 
-    val shellLeftPx = lerp(capsuleLeft, fullLeft, horizontal.value)
-    val shellWidthPx = lerp(capsuleWidthPx, fullWidthPx, horizontal.value)
-    val shellTopPx = lerp(capsuleTop, fullTop, vertical.value)
-    val shellHeightPx = lerp(capsuleHeightPx, fullHeightPx, vertical.value)
-    // contentFromStart：内容始终可见（封面随壳生长，p=0 时等于卡片）；否则按动画淡入。
-    val contentAlphaValue = if (contentFromStart) 1f else contentAlpha.value
+    // 注意：动画值（horizontal / vertical / contentAlpha）一律不在组合阶段读取，
+    // 只在 layout / draw 的 lambda 里读——否则每帧都会重组整个 ExpandableShell
+    // （含内容子树：列表/网格），这是胶囊壳展开卡顿的主因。
+    // 启动动画的 LaunchedEffect 不依赖这些值，读值下沉不影响动画本身。
 
     // 占位层：盖住底下页面、拦截触摸。
     Box(
@@ -209,11 +219,20 @@ fun ExpandableShell(
         val shellShape = RoundedCornerShape(topStart = shapeCornerDp, topEnd = shapeCornerDp)
         Box(
             modifier = Modifier
-                .width(with(density) { shellWidthPx.toDp() })
-                .height(with(density) { shellHeightPx.toDp() })
+                // 壳尺寸随动画每帧变化：把 animatable 读取下沉到 layout 阶段，
+                // 于是只触发重排（不重组）——内容子树的组合被跳过。
+                .layout { measurable, _ ->
+                    val w = lerp(capsuleWidthPx, fullWidthPx, horizontal.value)
+                        .roundToInt().coerceAtLeast(0)
+                    val h = lerp(capsuleHeightPx, fullHeightPx, vertical.value)
+                        .roundToInt().coerceAtLeast(0)
+                    val placeable = measurable.measure(Constraints.fixed(w, h))
+                    layout(w, h) { placeable.place(0, 0) }
+                }
+                // 平移同样在 draw 阶段读取，不触发重组。
                 .graphicsLayer {
-                    translationX = shellLeftPx
-                    translationY = shellTopPx
+                    translationX = lerp(capsuleLeft, fullLeft, horizontal.value)
+                    translationY = lerp(capsuleTop, fullTop, vertical.value)
                 }
                 .shadow(1.dp, shellShape, clip = false)
                 .clip(shellShape)
@@ -237,9 +256,10 @@ fun ExpandableShell(
                         .weight(1f)
                         .fillMaxWidth()
                         .padding(bottom = if (contentFromStart) 0.dp else recessedBottom)
-                        .graphicsLayer { alpha = contentAlphaValue },
+                        // alpha 在 draw 阶段读取，不触发重组。
+                        .graphicsLayer { alpha = if (contentFromStart) 1f else contentAlpha.value },
                     content = {
-                        CompositionLocalProvider(LocalShellProgress provides horizontal.value) {
+                        CompositionLocalProvider(LocalShellProgress provides horizontalState) {
                             content()
                         }
                     },
