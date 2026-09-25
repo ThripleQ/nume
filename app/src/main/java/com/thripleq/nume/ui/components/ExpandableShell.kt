@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.requiredWidth
@@ -39,6 +40,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import kotlin.math.roundToInt
@@ -290,13 +292,24 @@ fun ExpandableShell(
                     val placeable = measurable.measure(Constraints.fixed(w, h))
                     layout(w, h) { placeable.place(0, 0) }
                 }
-                // 平移同样在 draw 阶段读取，不触发重组。
-                .graphicsLayer {
-                    translationX = lerp(capsuleLeft, fullLeft, horizontal.value)
-                    translationY = lerp(capsuleTop, fullTop, vertical.value)
+                // 平移同样在 layout 阶段读取；用 offset（只改放置、不新建图层）而非 graphicsLayer，
+                // 避免给整屏壳再套一层 offscreen。
+                .offset {
+                    IntOffset(
+                        lerp(capsuleLeft, fullLeft, horizontal.value).roundToInt(),
+                        lerp(capsuleTop, fullTop, vertical.value).roundToInt(),
+                    )
                 }
-                .shadow(1.dp, shellShape, clip = false)
-                .clip(shellShape)
+                // shadow 与 clip 一样只在动画期间需要：稳态下壳顶与同色状态栏让位区齐平，
+                // 圆角及其投影都不可见。两者都会给整屏壳套一层 RenderNode/offscreen，
+                // 让滚动时整个列表每帧重录 display list——这是列表卡顿的主因。
+                .then(
+                    if (!settled.value || closing) {
+                        Modifier.shadow(1.dp, shellShape, clip = false).clip(shellShape)
+                    } else {
+                        Modifier
+                    },
+                )
                 .background(containerColor),
         ) {
             Column(
@@ -331,12 +344,12 @@ fun ExpandableShell(
                 Box(
                     contentModifier
                         .padding(bottom = if (contentFromStart) 0.dp else recessedBottom)
-                        .graphicsLayer {
-                            // 内容恒不透明：hero 原地淡出即可露出内容，无需与内容交叉淡入
-                            // （因此也不依赖内容是否加载完成——骨架/列表都一样）。
-                            if (!contentFromStart) {
-                                translationX = -lerp(capsuleLeft, fullLeft, horizontal.value)
-                            }
+                        .offset {
+                            // 抵消壳的水平平移，使内容在屏幕上静止、只由壳裁剪露出；用 offset 而非
+                            // graphicsLayer，避免内容子树再套一层 offscreen（layout 期读取，不重组）。
+                            val x = if (contentFromStart) 0
+                                else -lerp(capsuleLeft, fullLeft, horizontal.value).roundToInt()
+                            IntOffset(x, 0)
                         },
                     content = {
                         CompositionLocalProvider(

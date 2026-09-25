@@ -121,14 +121,19 @@ fun TrackListScreen(
     val actionsOffscreen by remember { derivedStateOf { actionsTop < actionsThresholdPx } }
     LaunchedEffect(actionsOffscreen) { onActionsOffscreen(actionsOffscreen) }
 
-    // 壳展开动画结束前既不加载也不组合列表：动画期间只留骨架（封面由 previewCoverUrl 提前画），
-    // 把「首次组合长列表 + 文本排版」的开销挪到动画之后，避免动画掉帧。非壳环境默认立即就绪。
+    // 加载与壳展开**并行**：动画一开始就发起请求，数据在后台拉取——动画结束时通常已就绪，
+    // 不再出现「动画结束 → 骨架再等一个网络往返」的割裂感（那会让加载显得慢）。渲染仅在壳
+    // 展开约 35% 后才允许切到列表：躲开起帧争抢，且 260ms 的 Crossfade 与剩余展开动画同步
+    // 收尾，列表随壳渐次露出。非壳环境（shellSettled 恒 true / progress 恒 1）立即就绪。
     val shellSettled = LocalShellSettled.current
+    val shellProgress = LocalShellProgress.current
     var contentReady by remember { mutableStateOf(false) }
     LaunchedEffect(source, id) {
-        if (!shellSettled.value) snapshotFlow { shellSettled.value }.first { it }
-        contentReady = true
         vm.load(src, id, title)
+        if (!shellSettled.value) {
+            snapshotFlow { shellSettled.value || shellProgress.value >= 0.35f }.first { it }
+        }
+        contentReady = true
     }
     LaunchedEffect(Unit) { vm.openPlayer.collect { onOpenPlayer() } }
 
