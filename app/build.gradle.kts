@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.hilt)
     alias(libs.plugins.ksp)
     alias(libs.plugins.serialization)
+    alias(libs.plugins.androidx.baselineprofile)
 }
 
 android {
@@ -35,7 +36,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -122,4 +124,7 @@ dependencies {
     // Kotlin 2.4.x emits 2.4.0 metadata and would abort the processor. Bump the
     // metadata reader explicitly until a Hilt release tracks Kotlin 2.4.
     ksp("org.jetbrains.kotlin:kotlin-metadata-jvm:2.4.10")
+
+    // Baseline Profile generation (macrobenchmark driven; see :baselineprofile).
+    baselineProfile(project(":baselineprofile"))
 }
