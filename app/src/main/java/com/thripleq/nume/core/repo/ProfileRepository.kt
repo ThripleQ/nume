@@ -113,7 +113,7 @@ class ProfileRepository @Inject constructor(
                 uid = account.optLong("id", 0L),
                 nickname = profile?.optString("nickname")
                     ?: account.optString("userName"),
-                avatarUrl = profile?.optString("avatarUrl")?.takeIf { it.isNotBlank() },
+                avatarUrl = httpsUrl(profile?.optString("avatarUrl")),
                 vipType = profile?.optLong("vipType", 0L) ?: 0L,
             )
         } catch (e: Exception) {
@@ -189,7 +189,7 @@ class ProfileRepository @Inject constructor(
                             id = id.toString(),
                             name = o.optString("name"),
                             artist = o.optString("artistName"),
-                            artworkUrl = o.optString("picUrl").takeIf { it.isNotBlank() },
+                            artworkUrl = httpsUrl(o.optString("picUrl")),
                             durationMs = 0L,
                             albumName = o.optString("albumName"),
                         ),
@@ -242,8 +242,7 @@ class ProfileRepository @Inject constructor(
                         Album(
                             id = id.toString(),
                             name = o.optString("albumName", o.optString("name")),
-                            coverUrl = o.optString("cover", o.optString("picUrl"))
-                                .takeIf { it.isNotBlank() },
+                            coverUrl = httpsUrl(o.optString("cover", o.optString("picUrl"))),
                             artist = o.optJSONObject("artist")?.optString("name") ?: "",
                         ),
                     )
@@ -276,7 +275,7 @@ class ProfileRepository @Inject constructor(
                     val p = PlaylistSummary(
                         id = id.toString(),
                         name = o.optString("name"),
-                        coverUrl = o.optString("coverImgUrl").takeIf { it.isNotBlank() },
+                        coverUrl = httpsUrl(o.optString("coverImgUrl")),
                         trackCount = o.optLong("trackCount", 0L),
                         subscribed = o.optBoolean("subscribed", false),
                     )

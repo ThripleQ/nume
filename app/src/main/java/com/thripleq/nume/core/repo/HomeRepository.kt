@@ -49,7 +49,7 @@ class HomeRepository @Inject constructor(
                             PlaylistCard(
                                 id = id.toString(),
                                 name = o.optString("name"),
-                                coverUrl = o.optString("picUrl").takeIf { it.isNotBlank() },
+                                coverUrl = httpsUrl(o.optString("picUrl")),
                                 playCount = o.optLong("playCount", o.optLong("playcount", 0L)),
                                 trackCount = o.optLong("trackCount", 0L),
                             ),

@@ -48,7 +48,7 @@ fun parsePlaylistObject(obj: JSONObject): TrackCollection {
     return TrackCollection(
         id = id.toString(),
         name = obj.strOrEmpty("name"),
-        coverUrl = obj.strOrEmpty("coverImgUrl").takeIf { it.isNotBlank() },
+        coverUrl = httpsUrl(obj.strOrEmpty("coverImgUrl")),
         playCount = obj.optLong("playCount", 0L),
         subscribedCount = obj.optLong("subscribedCount", 0L),
         trackCount = obj.optLong("trackCount", 0L),
@@ -70,7 +70,7 @@ fun parseAlbumObject(root: JSONObject): TrackCollection {
     return TrackCollection(
         id = al?.optLong("id", 0L)?.toString() ?: "",
         name = al?.optString("name") ?: "",
-        coverUrl = al?.optString("picUrl")?.takeIf { it.isNotBlank() },
+        coverUrl = httpsUrl(al?.optString("picUrl")),
         playCount = 0L,
         subscribedCount = 0L,
         trackCount = tracks.size.toLong(),

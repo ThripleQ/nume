@@ -13,6 +13,15 @@ data class Track(
     val albumName: String = "",
 )
 
+/**
+ * 网易云部分端点返回 `http://` 图片址（典型：v6 `playlist/detail` 的 `al.picUrl`，
+ * 而 `coverImgUrl` 多是 https）。Android 默认禁明文 HTTP，Coil/Media3 会直接加载失败，
+ * 表现就是「封面全灰」。CDN 同时支持 https，统一升级（已是 https 的不动）。
+ */
+fun httpsUrl(url: String?): String? = url
+    ?.takeIf { it.isNotBlank() }
+    ?.let { if (it.startsWith("http://")) "https://" + it.removePrefix("http://") else it }
+
 /** Parses a standard netease song object (`songs`/`tracks` entries, ar/al shape). */
 fun parseTrack(o: JSONObject?): Track? {
     if (o == null) return null
@@ -24,7 +33,7 @@ fun parseTrack(o: JSONObject?): Track? {
         name = o.optString("name"),
         artist = o.optJSONArray("ar")?.optJSONObject(0)?.optString("name")
             ?: o.optJSONArray("artists")?.optJSONObject(0)?.optString("name") ?: "",
-        artworkUrl = al?.optString("picUrl")?.takeIf { it.isNotBlank() },
+        artworkUrl = httpsUrl(al?.optString("picUrl")),
         durationMs = o.optLong("dt", 0L),
         albumName = al?.optString("name") ?: "",
     )

@@ -47,7 +47,7 @@ class ChartRepository @Inject constructor(
                         Chart(
                             id = id.toString(),
                             name = obj.optString("name"),
-                            coverUrl = obj.optString("coverImgUrl").takeIf { it.isNotBlank() },
+                            coverUrl = httpsUrl(obj.optString("coverImgUrl")),
                             tracks = parseTracks(obj.optJSONArray("tracks")),
                         ),
                     )
