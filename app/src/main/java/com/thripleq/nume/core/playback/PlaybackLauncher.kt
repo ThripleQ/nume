@@ -100,6 +100,13 @@ class PlaybackLauncher @Inject constructor(
             var next = start + 1
             val end = start + n
             while (isActive) {
+                // shuffle 开启时 ExoPlayer 自行重排播放序列，按原顺序追尾预取的
+                // behind 计算会失真（可能预取一堆实际不播放的曲目），此时暂停补队列，
+                // 让 player 在已就绪的 item 里随机播放。
+                if (player.shuffleModeEnabled) {
+                    delay(PREFETCH_POLL_MS)
+                    continue
+                }
                 val behind = player.mediaItemCount - player.currentMediaItemIndex - 1
                 if (next < end && behind < PREFETCH_LOOKAHEAD) {
                     // 队列尾部快被播到，才解析下一首：请求随播放节奏稀疏发放，

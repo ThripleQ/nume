@@ -52,8 +52,10 @@ object PlayerHolder {
                 }
                 recoveryJob?.cancel()
                 recoveryJob = recoveryScope.launch {
-                    repeat(40) {
-                        delay(250)
+                    var attempts = 0
+                    while (attempts < RECOVERY_WAIT_ATTEMPTS) {
+                        delay(RECOVERY_POLL_MS)
+                        attempts++
                         if (nextMediaItemIndex != C.INDEX_UNSET && mediaItemCount > 0) {
                             recover()
                             return@launch
@@ -156,4 +158,9 @@ object PlayerHolder {
     }
 
     const val USER_AGENT = "nume/0.1 (Android)"
+
+    // 错误恢复轮询：间隔与次数共同决定最长等待(3s)。后台补队列可能还没就绪，
+    // 等一小段让它补上；超时则放弃这首，避免播放长时间卡死在错误态。
+    private const val RECOVERY_POLL_MS = 250L
+    private const val RECOVERY_WAIT_ATTEMPTS = 12
 }

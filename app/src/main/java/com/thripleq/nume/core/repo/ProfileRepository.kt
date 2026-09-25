@@ -66,6 +66,21 @@ class ProfileRepository @Inject constructor(
     var cachedProfile: ProfileData? = null
         private set
 
+    /** 最近一次成功/未登录的账号态短缓存。tab 频繁切换重建 ViewModel 时，
+     *  account() 不必每次都打一次 /account 往返；5s 内复用并保留旧值保证不闪。 */
+    private var cachedAccount: Pair<Account?, Long>? = null
+
+    /** 登录/登出后调用，让 [account] 立刻反映最新登录态，不读短缓存。 */
+    fun invalidateAccount() {
+        cachedAccount = null
+    }
+
+    private companion object {
+        // 账号态短缓存有效期：覆盖 tab 切换/VM 重建的峰值调用，又不至于让
+        // 登录态过期太久（5s 内手滑切 tab 仍复用，陈旧影响可忽略）。
+        const val ACCOUNT_REFRESH_MS = 5_000L
+    }
+
     /** 已解析"喜欢"曲目缓存（uid → tracks）：Profile 页计数与列表页共用，避免重复全量拉取。 */
     private val likedCache = LruCache<String, List<Track>>(2)
 
@@ -74,13 +89,23 @@ class ProfileRepository @Inject constructor(
 
     /** Current account, or null when not logged in (code 301) / on error. */
     suspend fun account(): Account? = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        cachedAccount?.let { (a, at) ->
+            if (now - at < ACCOUNT_REFRESH_MS) return@withContext a
+        }
+        val result = fetchAccount()
+        cachedAccount = result to now
+        result
+    }
+
+    private suspend fun fetchAccount(): Account? {
         val r = gateway.call(NeteaseOp.USER_ACCOUNT)
         // 明确未登录（301）时清缓存，让 UI 回落到未登录；网络错误保留旧缓存。
         if (r.code == 301) cachedProfile = null
-        if (r.err != 0 || r.code != 200) return@withContext null
-        try {
+        if (r.err != 0 || r.code != 200) return null
+        return try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
-            val account = root.optJSONObject("account") ?: return@withContext null
+            val account = root.optJSONObject("account") ?: return null
             val profile = root.optJSONObject("profile")
             Account(
                 uid = account.optLong("id", 0L),

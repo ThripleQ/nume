@@ -68,6 +68,7 @@ class ProfileViewModel @Inject constructor(
     fun webLoginCookies(cookieStr: String, onDone: (Boolean, String) -> Unit) {
         viewModelScope.launch {
             _busy.value = true
+            repository.invalidateAccount() // 登录态变了，丢弃账号短缓存
             gateway.importCookies(cookieStr)
             val account = repository.account()
             _busy.value = false
