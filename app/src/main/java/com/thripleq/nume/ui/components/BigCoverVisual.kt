@@ -25,6 +25,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.valentinilk.shimmer.shimmer
 
 /**
  * 封面 + 底部渐变遮罩 + 左下角名字（可选元信息）。
@@ -48,12 +49,19 @@ fun BigCoverVisual(
     scrimTop: Float = 0.5f,
     scrimAlpha: Float = 0.66f,
 ) {
-    Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant)) {
+    Box(modifier) {
         val context = LocalContext.current
         val model = remember(coverUrl) {
             coverUrl?.let { ImageRequest.Builder(context).data(it).size(480).build() }
         }
         if (model != null) {
+            // 占位微光：图片下载完不透明覆盖即隐藏。
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .shimmer()
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+            )
             AsyncImage(
                 model = model,
                 contentDescription = name,
@@ -61,7 +69,10 @@ fun BigCoverVisual(
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier.matchParentSize().background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
                 Icon(
                     Icons.Filled.MusicNote,
                     contentDescription = null,

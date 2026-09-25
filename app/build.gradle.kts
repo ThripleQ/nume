@@ -111,6 +111,9 @@ dependencies {
     // image loading
     implementation(libs.coil.compose)
 
+    // shimmer placeholders (skeleton loading)
+    implementation(libs.compose.shimmer)
+
     // dependency injection (Hilt)
     implementation(libs.dagger.hilt.android)
     ksp(libs.dagger.hilt.compiler)

@@ -2,11 +2,6 @@ package com.thripleq.nume.ui.screens
 
 import android.content.Context
 import android.widget.Toast
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -25,9 +20,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.DiscFull
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.Icon
@@ -44,7 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
@@ -61,7 +56,10 @@ import com.thripleq.nume.core.repo.Track
 import com.thripleq.nume.core.repo.TrackCollection
 import com.thripleq.nume.ui.components.BigCoverVisual
 import com.thripleq.nume.ui.components.LocalShellProgress
+import com.thripleq.nume.ui.components.SkeletonBox
+import com.thripleq.nume.ui.components.SkeletonLine
 import com.thripleq.nume.ui.playerbar.CollectionActions
+import com.valentinilk.shimmer.shimmer
 import com.thripleq.nume.ui.profile.TrackListSource
 import com.thripleq.nume.ui.profile.TrackListUiState
 import com.thripleq.nume.ui.profile.TrackListViewModel
@@ -151,52 +149,69 @@ fun TrackListScreen(
                 }
             }
         } else {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                when (state) {
-                    TrackListUiState.Loading -> LoadingHint("加载中…")
-                    TrackListUiState.Empty -> Text(
-                        "暂无曲目",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    TrackListUiState.Error -> Text(
-                        "曲目加载失败",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    is TrackListUiState.Ready -> LoadingHint("加载中…")
-                }
+            when (state) {
+                TrackListUiState.Empty -> CenteredHint("暂无曲目", MaterialTheme.colorScheme.onSurfaceVariant)
+                TrackListUiState.Error -> CenteredHint("曲目加载失败", MaterialTheme.colorScheme.error)
+                else -> TrackListSkeleton(showTopBar)
             }
         }
     }
 }
 
-/** 全屏加载动画（数据/首屏封面预载统一用这一段，不再分两段）。 */
 @Composable
-private fun LoadingHint(text: String) {
-    val rotation by rememberInfiniteTransition(label = "loadingSpin").animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(1400, easing = LinearEasing)),
-        label = "rotation",
-    )
+private fun CenteredHint(text: String, color: Color) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(text, style = MaterialTheme.typography.bodyMedium, color = color)
+    }
+}
+
+/**
+ * 列表骨架：与 banner 头同构——方形封面（内缩量同真实头，随壳展开进度收起）+ 居中三按钮 + 曲目行。
+ * 微光由根 Column 的 `shimmer()` 统一提供。
+ */
+@Composable
+private fun TrackListSkeleton(showTopBar: Boolean) {
+    val p = LocalShellProgress.current
     Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        Modifier
+            .fillMaxSize()
+            .shimmer()
+            .padding(top = if (showTopBar) 8.dp else 0.dp),
     ) {
-        Icon(
-            imageVector = Icons.Filled.DiscFull,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier
-                .size(56.dp)
-                .graphicsLayer { rotationZ = rotation },
+        SkeletonBox(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp * p)
+                .aspectRatio(1f),
+            RoundedCornerShape(16.dp),
         )
-        Text(
-            text,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Spacer(Modifier.height(12.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+        ) {
+            repeat(3) { SkeletonBox(Modifier.width(96.dp).height(40.dp), RoundedCornerShape(percent = 50)) }
+        }
+        Spacer(Modifier.height(12.dp))
+        repeat(6) { SkeletonTrackRow() }
+    }
+}
+
+@Composable
+private fun SkeletonTrackRow() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SkeletonBox(Modifier.size(48.dp), RoundedCornerShape(8.dp))
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            SkeletonLine(widthFraction = 0.6f, height = 14.dp)
+            SkeletonLine(widthFraction = 0.35f, height = 12.dp)
+        }
+        SkeletonBox(Modifier.size(24.dp), CircleShape)
     }
 }
 
@@ -302,10 +317,15 @@ private fun TrackRow(index: Int, track: Track, hPadding: Dp = 8.dp, onClick: () 
         Box(
             modifier = Modifier
                 .size(48.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
+                .clip(RoundedCornerShape(8.dp)),
         ) {
             if (artwork != null) {
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .shimmer()
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                )
                 AsyncImage(
                     model = artwork,
                     contentDescription = track.name,
@@ -313,7 +333,10 @@ private fun TrackRow(index: Int, track: Track, hPadding: Dp = 8.dp, onClick: () 
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Box(
+                    Modifier.matchParentSize().background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center,
+                ) {
                     Icon(
                         Icons.Filled.MusicNote,
                         contentDescription = null,

@@ -26,7 +26,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -63,6 +62,9 @@ import com.thripleq.nume.core.repo.Track
 import com.thripleq.nume.ui.components.BigCoverVisual
 import com.thripleq.nume.ui.components.ExpandableShell
 import com.thripleq.nume.ui.components.LocalShellProgress
+import com.thripleq.nume.ui.components.SkeletonBox
+import com.thripleq.nume.ui.components.SkeletonLine
+import com.valentinilk.shimmer.shimmer
 import com.thripleq.nume.ui.home.HomeUiState
 import com.thripleq.nume.ui.home.HomeViewModel
 
@@ -90,7 +92,7 @@ fun HomeScreen(
 
     Box(Modifier.fillMaxSize()) {
         when (val s = state) {
-            HomeUiState.Loading -> Centered { CircularProgressIndicator() }
+            HomeUiState.Loading -> HomeSkeleton(bottomPadding = islandClearance + 16.dp)
             HomeUiState.Error -> Centered {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("加载失败，请检查网络", color = MaterialTheme.colorScheme.onSurface)
@@ -290,10 +292,15 @@ private fun SmallTrackRow(track: Track, onClick: () -> Unit) {
         Box(
             Modifier
                 .size(52.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
+                .clip(RoundedCornerShape(8.dp)),
         ) {
             if (model != null) {
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .shimmer()
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                )
                 AsyncImage(
                     model = model,
                     contentDescription = track.name,
@@ -301,7 +308,10 @@ private fun SmallTrackRow(track: Track, onClick: () -> Unit) {
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Box(
+                    Modifier.matchParentSize().background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center,
+                ) {
                     Icon(
                         Icons.Filled.MusicNote,
                         contentDescription = null,
@@ -418,4 +428,79 @@ private fun HomeExpandShell(
 @Composable
 private fun Centered(content: @Composable () -> Unit) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { content() }
+}
+
+/* ── 加载骨架 ─────────────────────────────────────────── */
+
+/** 探索页骨架：与 [HomeContent] 同构——顶栏 + 区块标题 + 横滑大封面卡 + 单曲行。 */
+@Composable
+private fun HomeSkeleton(bottomPadding: Dp) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .shimmer()
+            .padding(bottom = bottomPadding),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SkeletonLine(widthFraction = 0.24f, height = 28.dp, shape = RoundedCornerShape(8.dp))
+            Spacer(Modifier.weight(1f))
+            SkeletonBox(Modifier.size(28.dp), CircleShape)
+        }
+
+        SkeletonSectionHeader()
+        repeat(3) { SkeletonTrackRow(artSize = 52.dp) }
+
+        SkeletonSectionHeader()
+        SkeletonCarousel()
+
+        SkeletonSectionHeader()
+        SkeletonCarousel()
+
+        SkeletonSectionHeader()
+        repeat(3) { SkeletonTrackRow(artSize = 52.dp) }
+    }
+}
+
+@Composable
+private fun SkeletonSectionHeader() {
+    SkeletonLine(
+        modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp),
+        widthFraction = 0.3f,
+        height = 22.dp,
+        shape = RoundedCornerShape(7.dp),
+    )
+}
+
+@Composable
+private fun SkeletonCarousel() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        repeat(3) { SkeletonBox(Modifier.size(BigCoverSize), RoundedCornerShape(16.dp)) }
+    }
+}
+
+@Composable
+private fun SkeletonTrackRow(artSize: Dp) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SkeletonBox(Modifier.size(artSize), RoundedCornerShape(8.dp))
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            SkeletonLine(widthFraction = 0.55f, height = 14.dp)
+            SkeletonLine(widthFraction = 0.3f, height = 12.dp)
+        }
+    }
 }

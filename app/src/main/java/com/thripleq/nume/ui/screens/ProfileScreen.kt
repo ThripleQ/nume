@@ -28,7 +28,6 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -65,8 +64,11 @@ import com.thripleq.nume.core.repo.Account
 import com.thripleq.nume.core.repo.PlaylistSummary
 import com.thripleq.nume.core.repo.ProfileData
 import com.thripleq.nume.ui.components.ExpandableShell
+import com.thripleq.nume.ui.components.SkeletonBox
+import com.thripleq.nume.ui.components.SkeletonLine
 import com.thripleq.nume.ui.profile.ProfileUiState
 import com.thripleq.nume.ui.profile.ProfileViewModel
+import com.valentinilk.shimmer.shimmer
 
 /**
  * 我的页：四颗胶囊（喜欢的音乐 / 已购 / 创建的歌单 / 收藏的歌单）。
@@ -86,7 +88,6 @@ fun ProfileScreen(
     vm: ProfileViewModel = hiltViewModel(),
 ) {
     val state by vm.uiState.collectAsStateWithLifecycle()
-    val busy by vm.busy.collectAsStateWithLifecycle()
 
     // 当前打开的面板（null = 无面板）。
     var panel by remember { mutableStateOf<ProfilePanel?>(null) }
@@ -113,7 +114,7 @@ fun ProfileScreen(
         ) {
             Spacer(Modifier.height(20.dp))
             when (val s = state) {
-                ProfileUiState.Loading -> LoadingRow(busy)
+                ProfileUiState.Loading -> ProfileSkeleton()
                 is ProfileUiState.Error -> ErrorRow { vm.refresh() }
                 // 未登录也先把完整窗口摆好：登录卡置顶，四个区块以占位呈现，
                 // 结构与已登录完全一致，点击任意区块引导登录。
@@ -155,12 +156,48 @@ private sealed interface ProfilePanel {
 
 /* ── header states ─────────────────────────────────────── */
 
+/** 我的页骨架：与已登录内容同构——用户卡 + 四颗胶囊（内部图标/标题/尾部占位）。 */
 @Composable
-private fun LoadingRow(busy: Boolean) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 24.dp)) {
-        if (busy) CircularProgressIndicator(Modifier.size(20.dp))
-        Spacer(Modifier.width(10.dp))
-        Text("加载中…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun ProfileSkeleton() {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .shimmer(),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SkeletonBox(Modifier.size(64.dp), CircleShape)
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                SkeletonLine(widthFraction = 0.4f, height = 18.dp)
+                SkeletonLine(widthFraction = 0.22f, height = 12.dp)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        repeat(4) {
+            SkeletonCapsule()
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+@Composable
+private fun SkeletonCapsule() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            .padding(horizontal = 16.dp, vertical = 18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SkeletonBox(Modifier.size(36.dp), RoundedCornerShape(10.dp))
+        Spacer(Modifier.width(14.dp))
+        SkeletonLine(widthFraction = 0.34f, height = 16.dp)
+        Spacer(Modifier.weight(1f))
+        SkeletonBox(Modifier.size(24.dp), CircleShape)
     }
 }
 
@@ -557,6 +594,12 @@ private fun UserCard(account: Account) {
                 val model = remember(account.avatarUrl) {
                     ImageRequest.Builder(context).data(account.avatarUrl).size(128).build()
                 }
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .shimmer()
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                )
                 AsyncImage(
                     model = model,
                     contentDescription = account.nickname,
@@ -565,7 +608,7 @@ private fun UserCard(account: Account) {
                 )
             } else {
                 Box(
-                    Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant),
+                    Modifier.matchParentSize().background(MaterialTheme.colorScheme.surfaceVariant),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
@@ -778,6 +821,12 @@ private fun PlaylistCell(
                 }
             }
             if (model != null) {
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .shimmer()
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                )
                 AsyncImage(
                     model = model,
                     contentDescription = playlist.name,
@@ -786,7 +835,7 @@ private fun PlaylistCell(
                 )
             } else {
                 Box(
-                    Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant),
+                    Modifier.matchParentSize().background(MaterialTheme.colorScheme.surfaceVariant),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(

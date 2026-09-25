@@ -1,6 +1,7 @@
 package com.thripleq.nume.ui.screens
 
 import android.net.Uri
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -17,7 +19,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,8 +33,11 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.thripleq.nume.core.repo.Chart
+import com.thripleq.nume.ui.components.SkeletonBox
+import com.thripleq.nume.ui.components.SkeletonLine
 import com.thripleq.nume.ui.library.LibraryUiState
 import com.thripleq.nume.ui.library.LibraryViewModel
+import com.valentinilk.shimmer.shimmer
 
 /** 免登录首页：列出排行榜，点进榜单到统一列表页。 */
 @Composable
@@ -44,7 +48,7 @@ fun LibraryScreen(
     val state by vm.uiState.collectAsStateWithLifecycle()
 
     when (val s = state) {
-        is LibraryUiState.Loading -> CenteredBox { CircularProgressIndicator() }
+        is LibraryUiState.Loading -> LibrarySkeleton()
         is LibraryUiState.Error -> CenteredBox {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("加载失败，请检查网络", color = MaterialTheme.colorScheme.onSurface)
@@ -87,6 +91,12 @@ private fun ChartList(charts: List<Chart>, onChart: (Chart) -> Unit) {
                         .clip(RoundedCornerShape(8.dp)),
                 ) {
                     c.coverUrl?.let { url ->
+                        Box(
+                            Modifier
+                                .matchParentSize()
+                                .shimmer()
+                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                        )
                         AsyncImage(
                             model = Uri.parse(url),
                             contentDescription = c.name,
@@ -111,4 +121,30 @@ private fun ChartList(charts: List<Chart>, onChart: (Chart) -> Unit) {
 @Composable
 private fun CenteredBox(content: @Composable () -> Unit) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { content() }
+}
+
+/** 排行榜骨架：标题 + 榜单行（52dp 封面 + 名称）。 */
+@Composable
+private fun LibrarySkeleton() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .shimmer()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        SkeletonLine(widthFraction = 0.3f, height = 22.dp)
+        repeat(8) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SkeletonBox(Modifier.size(52.dp), RoundedCornerShape(8.dp))
+                Spacer(Modifier.width(12.dp))
+                SkeletonLine(widthFraction = 0.5f, height = 16.dp)
+            }
+        }
+    }
 }

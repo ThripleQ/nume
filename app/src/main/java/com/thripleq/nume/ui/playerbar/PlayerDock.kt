@@ -126,6 +126,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.valentinilk.shimmer.shimmer
 import com.thripleq.nume.Home
 import com.thripleq.nume.Profile
 import com.thripleq.nume.Search
@@ -714,16 +715,24 @@ private fun PlayerBarContent(
         Box(
             modifier = Modifier
                 .size(44.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surface),
+                .clip(RoundedCornerShape(12.dp)),
         ) {
-            playerState.coverUrl?.let { uri ->
+            val uri = playerState.coverUrl
+            if (uri == null) {
+                Box(Modifier.matchParentSize().background(MaterialTheme.colorScheme.surface))
+            } else {
                 val model = remember(uri) {
                     ImageRequest.Builder(context)
                         .data(Uri.parse(uri))
                         .size(120)
                         .build()
                 }
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .shimmer()
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                )
                 AsyncImage(
                     model = model,
                     contentDescription = playerState.title,
@@ -1511,12 +1520,12 @@ private fun CoverArt(
     Box(
         modifier = modifier
             .size(dim)
-            .clip(RoundedCornerShape(corner))
-            .background(MaterialTheme.colorScheme.surface),
+            .clip(RoundedCornerShape(corner)),
         contentAlignment = Alignment.Center,
     ) {
         val coverUrl = state.coverUrl
         if (coverUrl == null) {
+            Box(Modifier.matchParentSize().background(MaterialTheme.colorScheme.surface))
             // 空状态：一块空白封面太秃，放个弱化的音符占位。
             Icon(
                 Icons.Filled.MusicNote,
@@ -1528,6 +1537,12 @@ private fun CoverArt(
             val model = remember(coverUrl, px) {
                 ImageRequest.Builder(context).data(coverUrl).size(px).build()
             }
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .shimmer()
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+            )
             AsyncImage(
                 model = model,
                 contentDescription = state.title,
