@@ -60,6 +60,7 @@ import com.thripleq.nume.ui.components.LocalShellProgress
 import com.thripleq.nume.ui.components.ShimmerImagePlaceholder
 import com.thripleq.nume.ui.components.SkeletonBox
 import com.thripleq.nume.ui.components.SkeletonLine
+import com.thripleq.nume.ui.components.shellInset
 import com.thripleq.nume.ui.playerbar.CollectionActions
 import com.valentinilk.shimmer.shimmer
 import com.thripleq.nume.ui.profile.TrackListSource
@@ -173,7 +174,7 @@ private fun CenteredHint(text: String, color: Color) {
  */
 @Composable
 private fun TrackListSkeleton(showTopBar: Boolean) {
-    val p = LocalShellProgress.current.value
+    val progress = LocalShellProgress.current
     Column(
         Modifier
             .fillMaxSize()
@@ -183,7 +184,7 @@ private fun TrackListSkeleton(showTopBar: Boolean) {
         SkeletonBox(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp * p)
+                .shellInset(progress, 16.dp)
                 .aspectRatio(1f),
             RoundedCornerShape(16.dp),
         )
@@ -232,7 +233,7 @@ private fun TrackListBannerHeader(
     onActionsTop: (Float) -> Unit,
 ) {
     val context = LocalContext.current.applicationContext
-    val p = LocalShellProgress.current.value
+    val progress = LocalShellProgress.current
     val meta = listOfNotNull(
         collectionMetaLine(collection).takeIf { it.isNotBlank() },
         collection.updateFrequency.takeIf { it.isNotBlank() },
@@ -243,7 +244,7 @@ private fun TrackListBannerHeader(
         Box(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp * p)
+                .shellInset(progress, 16.dp)
                 .aspectRatio(1f)
                 .clip(RoundedCornerShape(16.dp)),
         ) {

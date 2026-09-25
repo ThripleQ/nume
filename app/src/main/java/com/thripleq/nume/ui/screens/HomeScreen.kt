@@ -410,16 +410,16 @@ private fun HomeExpandShell(
                     bottomPadding = bottomPadding,
                 )
                 // 关闭按钮：浮在左上、不随列表滚，随展开进度淡入（p=0 不可见、不响应点击）。
-                val p = LocalShellProgress.current.value
+                val progress = LocalShellProgress.current
                 Box(
                     Modifier
                         .align(Alignment.TopStart)
                         .padding(12.dp)
                         .size(36.dp)
-                        .graphicsLayer { alpha = p }
+                        .graphicsLayer { alpha = progress.value }
                         .clip(CircleShape)
                         .background(Color.Black.copy(alpha = 0.38f))
-                        .clickable(enabled = p > 0.5f, onClick = onDismiss),
+                        .clickable { if (progress.value > 0.5f) onDismiss() },
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(

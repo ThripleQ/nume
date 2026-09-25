@@ -51,6 +51,19 @@ val LocalShellProgress: androidx.compose.runtime.ProvidableCompositionLocal<Stat
     staticCompositionLocalOf { mutableStateOf(1f) }
 
 /**
+ * 水平内缩随壳展开进度收缩：语义等价于 `padding(horizontal = maxInset * progress)`，
+ * 但在 **layout 阶段**读取 [progress]——因此宿主 composable 不会被每帧重组，
+ * 只触发这一处重排。banner 封面 / 骨架封面用它替代组合期的 `16.dp * p`。
+ */
+fun Modifier.shellInset(progress: State<Float>, maxInset: Dp): Modifier =
+    layout { measurable, constraints ->
+        val inset = (maxInset.toPx() * progress.value).roundToInt()
+        val w = (constraints.maxWidth - 2 * inset).coerceAtLeast(0)
+        val placeable = measurable.measure(constraints.copy(minWidth = w, maxWidth = w))
+        layout(constraints.maxWidth, placeable.height) { placeable.place(inset, 0) }
+    }
+
+/**
  * 通用「胶囊壳 → 全屏面板」伸展覆盖层。
  *
  * 从一个胶囊的 [fromRect]（窗口坐标 Rect）平滑伸展到全屏，再缩回原位。
