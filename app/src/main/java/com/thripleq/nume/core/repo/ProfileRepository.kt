@@ -310,7 +310,7 @@ class ProfileRepository @Inject constructor(
         collectionCache[key]?.let { return@withContext it }
         val r = gateway.call(NeteaseOp.ALBUM_DETAIL, albumId)
         diag("albumCollection op=${NeteaseOp.ALBUM_DETAIL} id=$albumId code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(300)}")
-        // 与 songDetails 同: 该接口 ApiResult.code 可能为 0(非 200), 不能以 code!=200 拒绝
+        // 同 songDetails：以 err+body 判定，code 仅作诊断
         if (r.err != 0 || r.body.isEmpty()) return@withContext null
         try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
@@ -347,8 +347,8 @@ class ProfileRepository @Inject constructor(
         // /weapi/v3/song/detail accepts up to ~1000 ids in one call.
         val r = gateway.call(NeteaseOp.SONG_DETAIL, ids.joinToString(","))
         diag("songDetails op=${NeteaseOp.SONG_DETAIL} ids=${ids.size} code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(300)}")
-        // 注意: 该接口的 ApiResult.code 可能为 0(非 200), 但 body 正常 ——
-        // 不能以 code!=200 拒绝, 否则整个列表为空
+        // create_weapi 路径：body 无顶层 code 时库 fallback code=200/err=0；
+        // 旧版严格路径的 code=0 已不复现。以 err+body 判定，code 仅作诊断。
         if (r.err != 0 || r.body.isEmpty()) return emptyList()
         return try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
