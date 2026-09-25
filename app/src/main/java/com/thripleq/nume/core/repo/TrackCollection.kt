@@ -39,7 +39,7 @@ private fun JSONObject.strOrEmpty(key: String): String =
     optString(key).takeIf { it.isNotBlank() && it != "null" && it != "undefined" } ?: ""
 
 /**
- * 从 /weapi/v3/playlist/detail 返回的 playlist 对象解析壳元数据 + 曲目。
+ * 从 /api/v6/playlist/detail 返回的 playlist 对象解析壳元数据 + 曲目。
  * 榜单 id 就是歌单 id，两者共用此解析；曲目用共享的 [parseTracks]。
  */
 fun parsePlaylistObject(obj: JSONObject): TrackCollection {

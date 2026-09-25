@@ -298,7 +298,9 @@ class ProfileRepository @Inject constructor(
         try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
             val playlist = root.optJSONObject("playlist") ?: return@withContext null
-            parsePlaylistObject(playlist).also { collectionCache[key] = it }
+            val base = parsePlaylistObject(playlist)
+            base.copy(tracks = completePlaylistTracks(gateway, playlist, base.tracks))
+                .also { collectionCache[key] = it }
         } catch (_: Exception) {
             null
         }

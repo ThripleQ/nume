@@ -61,7 +61,7 @@ class ChartRepository @Inject constructor(
     /**
      * 一个榜单的完整壳（元数据 + 曲目）。匿名 /weapi/toplist/detail 里
      * per-chart 的 `tracks` 预览是空的；榜单 id 本身就是歌单 id，改从
-     * /weapi/v3/playlist/detail 拉完整集合。结果内存缓存，重进不重拉。
+     * /api/v6/playlist/detail 拉完整集合。结果内存缓存，重进不重拉。
      */
     suspend fun chartCollection(chartId: String): TrackCollection? = withContext(Dispatchers.IO) {
         collectionCache[chartId]?.let { return@withContext it }
@@ -73,7 +73,8 @@ class ChartRepository @Inject constructor(
         try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
             val playlist = root.optJSONObject("playlist") ?: return@withContext null
-            val collection = parsePlaylistObject(playlist)
+            val base = parsePlaylistObject(playlist)
+            val collection = base.copy(tracks = completePlaylistTracks(gateway, playlist, base.tracks))
             collectionCache[chartId] = collection
             collection
         } catch (_: Exception) {
