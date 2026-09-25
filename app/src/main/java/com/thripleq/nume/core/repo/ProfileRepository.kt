@@ -79,6 +79,8 @@ class ProfileRepository @Inject constructor(
         // 账号态短缓存有效期：覆盖 tab 切换/VM 重建的峰值调用，又不至于让
         // 登录态过期太久（5s 内手滑切 tab 仍复用，陈旧影响可忽略）。
         const val ACCOUNT_REFRESH_MS = 5_000L
+        // 已购曲目/专辑分页大小：单页 100，随 offset 一直拉直到某页不满为止。
+        const val PAGE_SIZE = 100
     }
 
     /** 已解析"喜欢"曲目缓存（uid → tracks）：Profile 页计数与列表页共用，避免重复全量拉取。 */
@@ -147,16 +149,34 @@ class ProfileRepository @Inject constructor(
         songDetails(ids).also { likedCache[uid.toString()] = it }
     }
 
-    /** Purchased single tracks (/api/single/mybought/song/list). */
+    /** Purchased single tracks (/api/single/mybought/song/list). 分页拉全，避免上限 100。 */
     suspend fun purchasedSongs(): List<Track> = withContext(Dispatchers.IO) {
-        val r = gateway.call(NeteaseOp.SONG_PURCHASED, "100", "0")
-        diag("purchasedSongs op=${NeteaseOp.SONG_PURCHASED} code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(400)}")
-        if (r.err != 0 || r.body.isEmpty()) return@withContext emptyList()
-        try {
+        val all = mutableListOf<Track>()
+        var offset = 0
+        while (true) {
+            val page = fetchPurchasedSongPage(offset) ?: break
+            all += page
+            if (page.size < PAGE_SIZE) break
+            offset += PAGE_SIZE
+        }
+        if (all.isNotEmpty()) {
+            diag("purchasedSongs complete offset=$offset total=${all.size}")
+        }
+        all
+    }
+
+    /** 单页已购单曲。返回 null 表示请求/解析失败（终止分页）；否则返回该页列表。 */
+    private suspend fun fetchPurchasedSongPage(offset: Int): List<Track>? {
+        val r = gateway.call(NeteaseOp.SONG_PURCHASED, PAGE_SIZE.toString(), offset.toString())
+        if (r.err != 0 || r.body.isEmpty()) {
+            diag("purchasedSongs page offset=$offset err=${r.err} code=${r.code}")
+            return null
+        }
+        return try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
             val list = root.optJSONObject("data")?.optJSONArray("list")
                 ?: root.optJSONArray("data")
-                ?: return@withContext emptyList()
+                ?: return emptyList()
             // 返回结构为 {songId,name,picUrl,artistName,albumName,...},
             // 不是标准 song 对象, 需按字段映射
             buildList {
@@ -178,21 +198,39 @@ class ProfileRepository @Inject constructor(
             }
         } catch (e: Exception) {
             Log.e("ProfileRepository", "purchased songs parse failed: ${e.message}")
-            emptyList()
+            null
         }
     }
 
-    /** Purchased digital albums (/api/digitalAlbum/purchased). */
+    /** Purchased digital albums (/api/digitalAlbum/purchased). 分页拉全，避免上限 100。 */
     suspend fun purchasedAlbums(): List<Album> = withContext(Dispatchers.IO) {
-        val r = gateway.call(NeteaseOp.ALBUM_PURCHASED, "100", "0")
-        diag("purchasedAlbums op=${NeteaseOp.ALBUM_PURCHASED} code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(400)}")
-        if (r.err != 0 || r.body.isEmpty()) return@withContext emptyList()
-        try {
+        val all = mutableListOf<Album>()
+        var offset = 0
+        while (true) {
+            val page = fetchPurchasedAlbumPage(offset) ?: break
+            all += page
+            if (page.size < PAGE_SIZE) break
+            offset += PAGE_SIZE
+        }
+        if (all.isNotEmpty()) {
+            diag("purchasedAlbums complete offset=$offset total=${all.size}")
+        }
+        all
+    }
+
+    /** 单页已购专辑。返回 null 表示请求/解析失败（终止分页）；否则返回该页列表。 */
+    private suspend fun fetchPurchasedAlbumPage(offset: Int): List<Album>? {
+        val r = gateway.call(NeteaseOp.ALBUM_PURCHASED, PAGE_SIZE.toString(), offset.toString())
+        if (r.err != 0 || r.body.isEmpty()) {
+            diag("purchasedAlbums page offset=$offset err=${r.err} code=${r.code}")
+            return null
+        }
+        return try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
             val list = root.optJSONArray("paidAlbums")
                 ?: root.optJSONObject("data")?.optJSONArray("list")
                 ?: root.optJSONArray("data")
-                ?: return@withContext emptyList()
+                ?: return emptyList()
             // 返回结构为 {albumId,cover,albumName,artist:{name},...},
             // 不是标准 album 对象, 需按字段映射
             buildList {
@@ -213,7 +251,7 @@ class ProfileRepository @Inject constructor(
             }
         } catch (e: Exception) {
             Log.e("ProfileRepository", "purchased albums parse failed: ${e.message}")
-            emptyList()
+            null
         }
     }
 

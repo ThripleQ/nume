@@ -24,12 +24,19 @@ import javax.inject.Inject
 sealed interface HomeUiState {
     data object Loading : HomeUiState
     data object Error : HomeUiState
+
+    /**
+     * 逐块回填态：四个内容字段用 `null` 表示「这块还没拉到」，非空表示已就绪
+     * （其中 daily/recent 的 `emptyList()` 表示就绪但确实没有，用于展示登录引导）。
+     * 各块异步并行、一就绪即整体发布，让首屏先显示先到的歌单/榜单，而不是等
+     * 最慢的一块决定整页。
+     */
     data class Ready(
         val loggedIn: Boolean,
-        val playlists: List<PlaylistCard>,
-        val charts: List<Chart>,
-        val dailySongs: List<Track>,
-        val recentSongs: List<Track>,
+        val playlists: List<PlaylistCard>?,
+        val charts: List<Chart>?,
+        val dailySongs: List<Track>?,
+        val recentSongs: List<Track>?,
     ) : HomeUiState
 }
 
@@ -54,20 +61,38 @@ class HomeViewModel @Inject constructor(
     fun load() {
         viewModelScope.launch {
             _uiState.value = HomeUiState.Loading
+
+            // 并行发起四块请求（登录态仅决定是否拉 daily/recent）。
             val loggedIn = homeRepo.loggedIn()
             val playlists = async { homeRepo.recommendPlaylists() }
             val charts = async { chartRepo.charts() }
             val daily = async { if (loggedIn) homeRepo.dailySongs() else emptyList() }
             val recent = async { if (loggedIn) homeRepo.recentSongs() else emptyList() }
+
+            // 逐块回填：每一块一就绪就整体发布，最慢的那块不再拖慢整页首屏。
+            // 四块全部聚齐后统一判空，全部为空才落到 Error。
+            var ready = HomeUiState.Ready(loggedIn, null, null, null, null)
+
             val pl = playlists.await()
+            ready = ready.copy(playlists = pl)
+            _uiState.value = ready
+
             val ch = charts.await()
+            ready = ready.copy(charts = ch)
+            _uiState.value = ready
+
             val da = daily.await()
+            ready = ready.copy(dailySongs = da)
+            _uiState.value = ready
+
             val re = recent.await()
-            _uiState.value = if (pl.isEmpty() && ch.isEmpty() && da.isEmpty() && re.isEmpty()) {
-                HomeUiState.Error
-            } else {
-                HomeUiState.Ready(loggedIn, pl, ch, da, re)
-            }
+            ready = ready.copy(recentSongs = re)
+
+            val allEmpty = ready.playlists.isNullOrEmpty() &&
+                ready.charts.isNullOrEmpty() &&
+                ready.dailySongs.isNullOrEmpty() &&
+                ready.recentSongs.isNullOrEmpty()
+            _uiState.value = if (allEmpty) HomeUiState.Error else ready
         }
     }
 

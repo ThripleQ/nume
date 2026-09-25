@@ -144,24 +144,31 @@ private fun HomeContent(
     ) {
         item(key = "topbar") { HomeTopBar(onRefresh) }
 
+        // 逐块渲染：null = 这块还没就绪，整个区块（含标题）不显示，避免未就绪
+        // 时先闪出空标题/登录引导；就绪后再按是否有内容决定渲染。
+
         // 每日推荐歌曲（小封面单曲行）
-        item(key = "h_daily") { SectionHeader("每日推荐歌曲") }
-        if (data.dailySongs.isNotEmpty()) {
-            itemsIndexed(
-                data.dailySongs,
-                key = { i, t -> "daily_${t.id}_$i" },
-                contentType = { _, _ -> "track" },
-            ) { i, t -> SmallTrackRow(t) { onPlay(data.dailySongs, i) } }
-        } else {
-            item(key = "login_daily") { LoginPrompt(onWebLogin) }
+        val daily = data.dailySongs
+        if (daily != null) {
+            item(key = "h_daily") { SectionHeader("每日推荐歌曲") }
+            if (daily.isNotEmpty()) {
+                itemsIndexed(
+                    daily,
+                    key = { i, t -> "daily_${t.id}_$i" },
+                    contentType = { _, _ -> "track" },
+                ) { i, t -> SmallTrackRow(t) { onPlay(daily, i) } }
+            } else {
+                item(key = "login_daily") { LoginPrompt(onWebLogin) }
+            }
         }
 
         // 推荐歌单（大封面横滑卡片）
-        if (data.playlists.isNotEmpty()) {
+        val playlists = data.playlists
+        if (playlists.isNullOrEmpty().not()) {
             item(key = "h_pl") { SectionHeader("推荐歌单") }
             item(key = "row_pl") {
                 CarouselRow(
-                    items = data.playlists,
+                    items = playlists,
                     keyOf = { it.id },
                     coverOf = { it.coverUrl },
                     nameOf = { it.name },
@@ -172,11 +179,12 @@ private fun HomeContent(
         }
 
         // 排行榜（大封面横滑卡片）
-        if (data.charts.isNotEmpty()) {
+        val charts = data.charts
+        if (charts.isNullOrEmpty().not()) {
             item(key = "h_chart") { SectionHeader("排行榜") }
             item(key = "row_chart") {
                 CarouselRow(
-                    items = data.charts,
+                    items = charts,
                     keyOf = { it.id },
                     coverOf = { it.coverUrl },
                     nameOf = { it.name },
@@ -187,15 +195,18 @@ private fun HomeContent(
         }
 
         // 最近播放（小封面单曲行）
-        item(key = "h_recent") { SectionHeader("最近播放") }
-        if (data.recentSongs.isNotEmpty()) {
-            itemsIndexed(
-                data.recentSongs,
-                key = { i, t -> "recent_${t.id}_$i" },
-                contentType = { _, _ -> "track" },
-            ) { i, t -> SmallTrackRow(t) { onPlay(data.recentSongs, i) } }
-        } else {
-            item(key = "login_recent") { LoginPrompt(onWebLogin) }
+        val recent = data.recentSongs
+        if (recent != null) {
+            item(key = "h_recent") { SectionHeader("最近播放") }
+            if (recent.isNotEmpty()) {
+                itemsIndexed(
+                    recent,
+                    key = { i, t -> "recent_${t.id}_$i" },
+                    contentType = { _, _ -> "track" },
+                ) { i, t -> SmallTrackRow(t) { onPlay(recent, i) } }
+            } else {
+                item(key = "login_recent") { LoginPrompt(onWebLogin) }
+            }
         }
     }
 }
