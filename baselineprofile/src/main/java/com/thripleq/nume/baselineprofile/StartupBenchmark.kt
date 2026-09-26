@@ -1,7 +1,7 @@
 package com.thripleq.nume.baselineprofile
 
 import androidx.benchmark.macro.CompilationMode
-import androidx.benchmark.macro.MacrobenchmarkRule
+import androidx.benchmark.macro.junit4.MacrobenchmarkRule
 import androidx.benchmark.macro.StartupMode
 import androidx.benchmark.macro.StartupTimingMetric
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -43,6 +43,7 @@ class StartupBenchmark {
             packageName = APP_PACKAGE,
             metrics = listOf(StartupTimingMetric()),
             startupMode = StartupMode.COLD,
+            iterations = ITERATIONS,
             measureBlock = {
                 // 只做启动：测量由 metrics 抓取，这里不额外触发交互，
                 // 免得把列表组合的耗时混进启动数里。
@@ -54,5 +55,6 @@ class StartupBenchmark {
 
     private companion object {
         const val APP_PACKAGE = "com.thripleq.nume"
+        const val ITERATIONS = 5
     }
 }

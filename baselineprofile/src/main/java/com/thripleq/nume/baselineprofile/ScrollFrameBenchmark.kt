@@ -1,7 +1,7 @@
 package com.thripleq.nume.baselineprofile
 
 import androidx.benchmark.macro.FrameTimingMetric
-import androidx.benchmark.macro.MacrobenchmarkRule
+import androidx.benchmark.macro.junit4.MacrobenchmarkRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Until
@@ -53,6 +53,7 @@ class ScrollFrameBenchmark {
         rule.measureRepeated(
             packageName = APP_PACKAGE,
             metrics = listOf(FrameTimingMetric()),
+            iterations = ITERATIONS,
             setupBlock = {
                 pressHome()
                 startActivityAndWait()
@@ -78,6 +79,7 @@ class ScrollFrameBenchmark {
         const val CHART_ENTRY = "飙升榜"
         const val ENTRY_TIMEOUT_MS = 15_000L
         const val REPEAT_SWIPES = 4
+        const val ITERATIONS = 5
         const val SWIPE_X = 540
         const val SWIPE_DOWN_FROM = 1850
         const val SWIPE_DOWN_TO = 850
