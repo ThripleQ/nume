@@ -141,6 +141,19 @@ fun TrackListScreen(
         }
         contentReady = true
     }
+
+    // 大封面就绪前不切到真列表。hero 与列表共用同一张封面的就绪时机：若列表先于封面出现，
+    // 就进入「已经能滚、hero 却因为大图没到还顶着」的窗口——hero 是浮层、不随列表滚动，
+    // 封面看着像卡住。把切换也压到大封面就绪之后，则列表出现与 hero 交接同一刻发生，
+    // 而等待期间是不可滚的骨架（还已挂着高清封面），观感无感。
+    // previewCoverUrl 为空表示无可等之图；非壳环境（NumeApp 导航）不传该值 → 天然不等待。
+    var coverReady by remember { mutableStateOf(previewCoverUrl == null) }
+    val onCoverDrawn: () -> Unit = remember(onCoverReady) {
+        {
+            coverReady = true
+            onCoverReady?.invoke()
+        }
+    }
     LaunchedEffect(Unit) { vm.openPlayer.collect { onOpenPlayer() } }
 
     // 数据到了直接显示列表（不预载封面：滚动到哪张就单张串行下载）。
@@ -168,13 +181,13 @@ fun TrackListScreen(
                 )
             }
         }
-        // 内容目标态：数据到达且壳动画结束后才切到列表；其余为骨架/空/错误。
+        // 内容目标态：数据到达、壳动画结束**且大封面已就绪**后才切到列表；其余为骨架/空/错误。
         // 目标态作**不透明底板**先画，骨架叠在其上渐隐——而不是 Crossfade 让两者同时半透明。
         // 两者同时半透明时谁也盖不住壳的深色底，封面/内容会短暂发暗（正常速度下就是
         // 「闪黑一下」）；底板恒在则全程不发暗。封面两态同源（骨架用 previewCoverUrl），
         // 淡化期间封面视觉无缝，不破坏 ExpandableShell 的 hero 交接对齐。
         val display: Any = when {
-            collection != null && contentReady -> collection
+            collection != null && contentReady && coverReady -> collection
             state is TrackListUiState.Empty -> TrackListUiState.Empty
             state is TrackListUiState.Error -> TrackListUiState.Error
             else -> TrackListUiState.Loading
@@ -208,7 +221,7 @@ fun TrackListScreen(
                                 showName,
                                 coverInsetFollowsShell,
                                 onCoverRect,
-                                onCoverReady,
+                                onCoverDrawn,
                                 watermarkIcon,
                             ) { actionsTop = it }
                         }
@@ -233,7 +246,7 @@ fun TrackListScreen(
                     coverUrl = previewCoverUrl,
                     title = title,
                     onCoverRect = onCoverRect,
-                    onCoverReady = onCoverReady,
+                    onCoverReady = onCoverDrawn,
                     // 叠在目标态之上淡出（draw 阶段读，不重组）。
                     modifier = Modifier.graphicsLayer { alpha = skeletonAlpha },
                 )
