@@ -85,9 +85,13 @@ val LocalShellSettled: androidx.compose.runtime.ProvidableCompositionLocal<State
  * hero 覆盖层当前的不透明度（[State]，只在 draw 阶段读取）：
  * 1 = 低清 hero 顶着（交接前），0 = 已交接给内容里的高清封面。
  *
- * 内容里的 banner / 骨架封面必须据此**与 hero 互补**：`alpha = 1 - 该值`。否则展开期间
- * 会出现「hero 与内容封面同时可见」的两层重影（hero 从卡片飞向 banner，期间与固定排版的
- * 内容封面错位重叠）。非壳环境默认 0，内容封面恒 1、照常显示。
+ * 内容里的 banner / 骨架封面据此**在 hero 之下铺底**：`alpha = if (该值 >= 1) 0 else 1`。
+ * - hero 完全不透明时内容封面隐藏 —— 否则展开期间「hero + 固定排版的内容封面」两层重影。
+ * - hero 一开始淡出（交接/收起）内容封面就变为**不透明**，作为交叉淡化的底板；hero 在其上
+ *   渐隐。若让内容封面与 hero 同时半透明（互补 alpha），中段两层都盖不住壳的深色底，
+ *   封面会短暂发暗（正常速度下就是「闪黑一下」）。
+ *
+ * 非壳环境默认 0，内容封面恒 1、照常显示。
  */
 val LocalShellHeroAlpha: androidx.compose.runtime.ProvidableCompositionLocal<State<Float>> =
     staticCompositionLocalOf { mutableStateOf(0f) }

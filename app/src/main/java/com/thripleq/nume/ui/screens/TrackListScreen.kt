@@ -3,7 +3,7 @@ package com.thripleq.nume.ui.screens
 import com.thripleq.nume.ui.theme.NumeShape
 import android.content.Context
 import android.widget.Toast
-import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -169,64 +169,73 @@ fun TrackListScreen(
             }
         }
         // 内容目标态：数据到达且壳动画结束后才切到列表；其余为骨架/空/错误。
-        // 用 Crossfade 交叉淡化，避免「骨架 → 列表」硬切造成的闪现感。两态封面同位同源
-        // （Home 骨架用 previewCoverUrl = 终态 banner 封面），淡化期间封面视觉无缝，
-        // 因此不会破坏 ExpandableShell 的 hero 交接对齐。
+        // 目标态作**不透明底板**先画，骨架叠在其上渐隐——而不是 Crossfade 让两者同时半透明。
+        // 两者同时半透明时谁也盖不住壳的深色底，封面/内容会短暂发暗（正常速度下就是
+        // 「闪黑一下」）；底板恒在则全程不发暗。封面两态同源（骨架用 previewCoverUrl），
+        // 淡化期间封面视觉无缝，不破坏 ExpandableShell 的 hero 交接对齐。
         val display: Any = when {
             collection != null && contentReady -> collection
             state is TrackListUiState.Empty -> TrackListUiState.Empty
             state is TrackListUiState.Error -> TrackListUiState.Error
             else -> TrackListUiState.Loading
         }
-        Crossfade(
-            targetState = display,
+        val skeletonAlpha by animateFloatAsState(
+            targetValue = if (display is TrackListUiState.Loading) 1f else 0f,
             animationSpec = tween(260),
-            label = "trackListContent",
-        ) { target ->
-            when (target) {
-                is TrackCollection -> LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(
-                        start = 0.dp,
-                        top = if (showTopBar) 8.dp else 0.dp,
-                        end = 0.dp,
-                        bottom = bottomPadding,
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    // 统一 banner 头：封面是列表第一项（左右 16dp 内缩、随滚动移出），元信息叠在封面里；
-                    // 列表行同样 16dp 内缩，与封面同宽。所有列表（榜单/歌单/专辑/喜欢/已购）共用此形态。
-                    item(key = "header") {
-                        TrackListBannerHeader(
-                            target,
-                            vm,
-                            showName,
-                            coverInsetFollowsShell,
-                            onCoverRect,
-                            onCoverReady,
-                            watermarkIcon,
-                        ) { actionsTop = it }
-                    }
-                    itemsIndexed(
-                        target.tracks,
-                        key = { _, t -> t.id },
-                        contentType = { _, _ -> "track" },
-                    ) { index, track ->
-                        TrackRow(index, track, hPadding = 16.dp) {
-                            vm.onTrackClick(target, index)
+            label = "trackListSkeletonAlpha",
+        )
+        Box(Modifier.fillMaxSize()) {
+            when (display) {
+                is TrackCollection -> {
+                    val target = display
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(
+                            start = 0.dp,
+                            top = if (showTopBar) 8.dp else 0.dp,
+                            end = 0.dp,
+                            bottom = bottomPadding,
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        // 统一 banner 头：封面是列表第一项（左右 16dp 内缩、随滚动移出），元信息叠在封面里；
+                        // 列表行同样 16dp 内缩，与封面同宽。所有列表（榜单/歌单/专辑/喜欢/已购）共用此形态。
+                        item(key = "header") {
+                            TrackListBannerHeader(
+                                target,
+                                vm,
+                                showName,
+                                coverInsetFollowsShell,
+                                onCoverRect,
+                                onCoverReady,
+                                watermarkIcon,
+                            ) { actionsTop = it }
+                        }
+                        itemsIndexed(
+                            target.tracks,
+                            key = { _, t -> t.id },
+                            contentType = { _, _ -> "track" },
+                        ) { index, track ->
+                            TrackRow(index, track, hPadding = 16.dp) {
+                                vm.onTrackClick(target, index)
+                            }
                         }
                     }
                 }
                 TrackListUiState.Empty -> CenteredHint("暂无曲目", MaterialTheme.colorScheme.onSurfaceVariant)
                 TrackListUiState.Error -> CenteredHint("曲目加载失败", MaterialTheme.colorScheme.error)
-                else -> TrackListSkeleton(
+            }
+            if (skeletonAlpha > 0.001f) {
+                TrackListSkeleton(
                     showTopBar = showTopBar,
                     coverInsetFollowsShell = coverInsetFollowsShell,
                     coverUrl = previewCoverUrl,
                     title = title,
                     onCoverRect = onCoverRect,
                     onCoverReady = onCoverReady,
+                    // 叠在目标态之上淡出（draw 阶段读，不重组）。
+                    modifier = Modifier.graphicsLayer { alpha = skeletonAlpha },
                 )
             }
         }
@@ -255,12 +264,13 @@ private fun TrackListSkeleton(
     title: String = "",
     onCoverRect: ((Rect) -> Unit)? = null,
     onCoverReady: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
 ) {
     val progress = LocalShellProgress.current
     // 展开动画期间 hero 正顶着封面：骨架封面与 hero 互补，避免两层重影（见 LocalShellHeroAlpha）。
     val heroAlpha = LocalShellHeroAlpha.current
     Column(
-        Modifier
+        modifier
             .fillMaxSize()
             .then(if (coverUrl == null) Modifier.shimmer() else Modifier)
             .padding(top = if (showTopBar) 8.dp else 0.dp),
@@ -272,8 +282,8 @@ private fun TrackListSkeleton(
                 else Modifier.padding(horizontal = 16.dp),
             )
             .aspectRatio(1f)
-            // 与 hero 互补：hero 顶着时透明，交接时随之淡入（draw 阶段读，不重组）。
-            .graphicsLayer { alpha = 1f - heroAlpha.value }
+            // hero 顶着时透明；hero 一开始淡出即变为不透明底板、hero 在其上渐隐（draw 阶段读，不重组）。
+            .graphicsLayer { alpha = if (heroAlpha.value >= 1f) 0f else 1f }
         if (coverUrl != null) {
             Box(
                 coverModifier
@@ -383,8 +393,8 @@ private fun TrackListBannerHeader(
                     },
                 )
                 .clip(NumeShape.Card)
-                // 与 hero 互补：hero 顶着时本封面透明，交接时随之淡入（draw 阶段读，不重组）。
-                .graphicsLayer { alpha = 1f - heroAlpha.value },
+                // hero 顶着时透明；hero 一开始淡出即变为不透明底板、hero 在其上渐隐（draw 阶段读，不重组）。
+                .graphicsLayer { alpha = if (heroAlpha.value >= 1f) 0f else 1f },
         ) {
             BigCoverVisual(
                 coverUrl = collection.coverUrl,

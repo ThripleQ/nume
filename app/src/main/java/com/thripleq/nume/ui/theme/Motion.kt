@@ -51,8 +51,13 @@ object Motion {
      */
     const val CornerHold = 0.55f
 
-    /** hero 低清封面与内容里高清 banner 的交接阈值。 */
-    const val HeroHandoffAt = 0.98f
+    /**
+     * hero 低清封面与内容里高清 banner 的交接阈值。
+     *
+     * 取 1（壳完全展开）而非更早：交接时内容封面要在**与 hero 像素对齐后**才变为不透明，
+     * 若在 0.98 等壳尚未长到终态时交接，内容封面会比 hero 偏下若干 px、露出边缘。
+     */
+    const val HeroHandoffAt = 1f
 
     /** 交接淡出时长。 */
     const val HeroFadeMs = 220

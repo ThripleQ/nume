@@ -606,8 +606,8 @@ private fun PlaylistGridPanel(
                     .fillMaxWidth()
                     .aspectRatio(1f)
                     .clip(NumeShape.Card)
-                    // 与 hero 互补：hero 顶着时透明，交接时随之淡入（draw 阶段读，不重组）。
-                    .graphicsLayer { alpha = 1f - heroAlpha.value },
+                    // hero 顶着时透明；hero 一开始淡出即变为不透明底板、hero 在其上渐隐（draw 阶段读，不重组）。
+                    .graphicsLayer { alpha = if (heroAlpha.value >= 1f) 0f else 1f },
             ) {
                 BigCoverVisual(
                     coverUrl = coverUrl,
