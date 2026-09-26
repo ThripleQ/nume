@@ -81,12 +81,13 @@ object NumeTransport {
             }
 
             return try {
-                Log.d("NumeTransport", "-> ${method} ${url}")
+                // URL 含签名/查询参数，仅 debug 打印，避免 release 泄露。
+                if (BuildConfig.DEBUG) Log.d("NumeTransport", "-> ${method} ${url}")
                 client.newCall(builder.build()).execute().use { resp ->
                     val status = resp.code
                     val bytes = resp.body.bytes()
                     val cookies = resp.headers.values("Set-Cookie").takeIf { it.isNotEmpty() }
-                    Log.d("NumeTransport", "<- status=${status} bytes=${bytes.size}")
+                    if (BuildConfig.DEBUG) Log.d("NumeTransport", "<- status=${status} bytes=${bytes.size}")
                     NumeTransportOut(status, null, bytes, cookies?.toTypedArray())
                 }
             } catch (e: Exception) {

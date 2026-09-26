@@ -6,13 +6,24 @@ import android.os.StrictMode
 import coil.Coil
 import coil.ImageLoader
 import coil.disk.DiskCache
+import com.thripleq.nume.core.playback.PlaybackUrls
+import com.thripleq.nume.core.playback.PlayerHolder
 import dagger.hilt.android.HiltAndroidApp
+import javax.inject.Inject
 
 /** App entry point; Hilt generates the dependency graph rooted here. */
 @HiltAndroidApp
 class NumeApplication : Application() {
+
+    // 播放器的惰性 URL 解析器（ResolvingDataSource 在 ExoPlayer 加载线程上回调）。
+    // 必须在任何 PlayerHolder.get() 之前安装好，Application.onCreate 是所有
+    // Activity/Service 之前唯一确定的时机。
+    @Inject
+    lateinit var playbackUrls: PlaybackUrls
+
     override fun onCreate() {
         super.onCreate()
+        PlayerHolder.installUrlResolver(playbackUrls::resolve)
         if (BuildConfig.DEBUG) enableStrictMode()
         // 封面加载策略对齐成熟 Compose 播放器（InnerTune/ViMusic）的验证过路径：
         // 不预载、不限制并发（Coil 默认线程池 + LRU 已是千万设备验证过的行为）、磁盘缓存兜底。

@@ -1,12 +1,14 @@
 package com.thripleq.nume.core.playback
 
 import android.content.Context
+import android.net.Uri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.CoroutineScope
@@ -15,6 +17,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.io.IOException
 
 /**
  * Process-scoped [ExoPlayer]. Built once with the byte-cache wired into its
@@ -24,6 +27,16 @@ object PlayerHolder {
 
     @Volatile
     private var player: ExoPlayer? = null
+
+    // song id → 签名音频 URL。由 NumeApplication 在启动时安装（见 installUrlResolver）。
+    // 在 ExoPlayer 加载线程上被调用，实现必须是阻塞且线程安全的。
+    @Volatile
+    private var urlResolver: ((String) -> String?)? = null
+
+    /** Installs the lazy URL resolver used by the [ResolvingDataSource]. Call once at startup. */
+    fun installUrlResolver(resolver: (String) -> String?) {
+        urlResolver = resolver
+    }
 
     // 错误恢复用的协程作用域。object 单例的普通属性在类初始化时就求值；
     // 用 lazy 推迟到首次真正需要时再取 Main dispatcher，避免在非 UI 线程
@@ -134,12 +147,26 @@ object PlayerHolder {
             .setUserAgent(USER_AGENT)
             .setAllowCrossProtocolRedirects(true)
 
-        val upstream = DefaultDataSource.Factory(context, http)
+        val base = DefaultDataSource.Factory(context, http)
 
-        // Byte-cache front: cache hit → local read; miss → range request upstream.
+        // 惰性解析：队列里放的是合成 URI `nume://song/<id>`，真正打开某首歌的字节流
+        // 时才把 URI 换成签名 URL。放在 CacheDataSource 的**上游**，于是缓存键取合成
+        // URI（稳定）：命中缓存根本不触发解析，签名 URL 轮换也不会让已缓存音频失效。
+        val resolving = ResolvingDataSource.Factory(base) { dataSpec ->
+            val id = PlaybackUrls.songId(dataSpec.uri)
+            if (id == null) {
+                dataSpec
+            } else {
+                val url = urlResolver?.invoke(id)
+                    ?: throw IOException("no playable url for song $id")
+                dataSpec.withUri(Uri.parse(url))
+            }
+        }
+
+        // Byte-cache front: cache hit → local read; miss → resolve URL + range request.
         val cacheFactory = CacheDataSource.Factory()
             .setCache(PlaybackCache.get(context))
-            .setUpstreamDataSourceFactory(upstream)
+            .setUpstreamDataSourceFactory(resolving)
 
         val mediaFactory =
             androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context)
@@ -153,7 +180,12 @@ object PlayerHolder {
         return ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaFactory)
             .setAudioAttributes(audioAttributes, /* handleAudioFocus= */ true)
-            .setWakeMode(C.WAKE_MODE_LOCAL)
+            // 流媒体用 NETWORK 唤醒锁（LOCAL 只持 CPU 锁，息屏后 WiFi 可能休眠，
+            // 弱网/长缓冲时断流）。成熟播放器（Media3 示例 / ViMusic）均用 NETWORK。
+            .setWakeMode(C.WAKE_MODE_NETWORK)
+            // 拔耳机/蓝牙断开自动暂停：handleAudioFocus 只处理 AudioFocus，
+            // 不覆盖 AUDIO_BECOMING_NOISY；不开会突然外放。
+            .setHandleAudioBecomingNoisy(true)
             .build()
     }
 
