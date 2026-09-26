@@ -9,7 +9,7 @@ import androidx.compose.ui.graphics.Color
  * seed = #C92027（品牌红）｜tertiary 色相 = seed + 70°｜暗色 surface 锚 tone 20
  *
  * 色相与明度音阶取自 OKLCH（感知均匀，tone = L×100）；与 Material Theme Builder 的
- * HCT 产出不逐位相同，但**所有 on_*/ 正文色对都按 WCAG 相对亮度验证过 ≥4.5:1**
+ * HCT 产出不逐位相同，但**所有 on_* 正文色对都按 WCAG 相对亮度验证过 ≥4.5:1**
  * （次要文字 ≥3.0:1），且主次容器、主次文字均强制可区分。
  *
  * 三条刻意的设计选择（详见脚本文件头）：
