@@ -23,7 +23,7 @@ class NumeApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        PlayerHolder.installUrlResolver(playbackUrls::resolve)
+        PlayerHolder.installUrlSource(playbackUrls)
         if (BuildConfig.DEBUG) enableStrictMode()
         // 封面加载策略对齐成熟 Compose 播放器（InnerTune/ViMusic）的验证过路径：
         // 不预载、不限制并发（Coil 默认线程池 + LRU 已是千万设备验证过的行为）、磁盘缓存兜底。

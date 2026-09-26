@@ -1,13 +1,19 @@
 package com.thripleq.nume.core.playback
 
+import android.content.Context
 import android.net.Uri
 import com.thripleq.nume.core.net.ApiResult
 import com.thripleq.nume.core.net.NetEaseGateway
 import com.thripleq.nume.core.net.NeteaseOp
+import dagger.hilt.android.qualifiers.ApplicationContext
 import org.json.JSONObject
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/** 该曲确实拿不到可播 URL（无版权 / VIP 未登录无权益）——不可靠重试恢复，应跳过。 */
+class NoPlayableUrlException(songId: String) : IOException("no playable url for song $songId")
 
 /**
  * 歌曲 id → 可播音频 URL 的解析与缓存，作为 Media3 [androidx.media3.datasource.ResolvingDataSource]
@@ -23,7 +29,8 @@ import javax.inject.Singleton
 @Singleton
 class PlaybackUrls @Inject constructor(
     private val gateway: NetEaseGateway,
-) {
+    @ApplicationContext private val context: Context,
+) : PlaybackUrlSource {
     private data class CachedUrl(val url: String?, val at: Long)
 
     private val urlCache = ConcurrentHashMap<String, CachedUrl>()
@@ -32,7 +39,7 @@ class PlaybackUrls @Inject constructor(
      * 解析歌曲的音频 URL；解析失败（无版权 / 未登录无权益 / 风控 / 网络）返回 null，
      * 由 ExoPlayer 的加载错误触发 [PlayerHolder] 的"自动跳下一首"。
      */
-    fun resolve(id: String): String? {
+    override fun resolve(id: String): String? {
         val now = System.currentTimeMillis()
         urlCache[id]?.let { hit ->
             // 成功结果按 CACHE_TTL_MS 复用；失败（null）只短缓存：网络抖动 / VIP 判定
@@ -45,9 +52,17 @@ class PlaybackUrls @Inject constructor(
         return url
     }
 
+    /** 签名 URL 过期（播放中遇 CDN 403）时由 [PlayerHolder] 调用，下次解析重新请求。 */
+    override fun invalidate(id: String) {
+        urlCache.remove(id)
+    }
+
     private fun query(id: String): String? {
-        // exhigh 是旗舰音质档；账号 / 曲目无权益时回退 standard（与上游一致）。
-        for (quality in QUALITIES) {
+        // 用户选定的音质档取不到时逐级向下回退（最终兜底 standard），与上游一致。
+        val order = PlaybackPreferences.qualityFallbackOrder(
+            PlaybackPreferences.quality(context),
+        )
+        for (quality in order) {
             val url = parseUrl(gateway.callBlocking(NeteaseOp.SONG_URL_V1, id, quality))
             if (url != null) return url
         }
@@ -87,7 +102,6 @@ class PlaybackUrls @Inject constructor(
         internal fun String.toHttps(): String =
             if (startsWith("http://", ignoreCase = true)) "https://" + substring(7) else this
 
-        private val QUALITIES = listOf("exhigh", "standard")
         // 音频 URL 有效期数小时，缓存 6h 后重新解析。
         private const val CACHE_TTL_MS = 6 * 60 * 60 * 1000L
         // 解析失败短缓存，尽快允许重试。

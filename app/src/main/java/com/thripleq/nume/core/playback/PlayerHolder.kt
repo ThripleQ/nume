@@ -17,7 +17,18 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.io.IOException
+
+/**
+ * 惰性音频 URL 的来源：由 [PlaybackUrls] 实现，[PlayerHolder] 在 ExoPlayer 打开
+ * 字节流时用它解析签名 URL，并在签名过期（CDN 403）时把它失效以触发重解析。
+ */
+interface PlaybackUrlSource {
+    /** 解析 song id 的签名音频 URL；不可播返回 null。运行在加载线程，需阻塞。 */
+    fun resolve(songId: String): String?
+
+    /** 丢弃缓存的 URL，下次 [resolve] 重新请求（用于签名过期）。 */
+    fun invalidate(songId: String)
+}
 
 /**
  * Process-scoped [ExoPlayer]. Built once with the byte-cache wired into its
@@ -28,14 +39,18 @@ object PlayerHolder {
     @Volatile
     private var player: ExoPlayer? = null
 
-    // song id → 签名音频 URL。由 NumeApplication 在启动时安装（见 installUrlResolver）。
-    // 在 ExoPlayer 加载线程上被调用，实现必须是阻塞且线程安全的。
+    // 由 NumeApplication 在启动时安装（见 installUrlSource）。在 ExoPlayer 加载
+    // 线程上被调用，实现必须阻塞且线程安全。
     @Volatile
-    private var urlResolver: ((String) -> String?)? = null
+    private var urlSource: PlaybackUrlSource? = null
 
-    /** Installs the lazy URL resolver used by the [ResolvingDataSource]. Call once at startup. */
-    fun installUrlResolver(resolver: (String) -> String?) {
-        urlResolver = resolver
+    // 已为某首歌重试过一次的标记（签名过期原地重试，最多一次，避免死循环）。
+    @Volatile
+    private var retriedItemId: String? = null
+
+    /** Installs the lazy URL source used by the [ResolvingDataSource]. Call once at startup. */
+    fun installUrlSource(source: PlaybackUrlSource) {
+        urlSource = source
     }
 
     // 错误恢复用的协程作用域。object 单例的普通属性在类初始化时就求值；
@@ -53,16 +68,38 @@ object PlayerHolder {
         }
     }
 
-    /** 播放失败（无权/VIP、盗链、404…）自动跳到下一首，别让队列卡死在 source
-     *  error 上。后台补队列可能还没把下一首加进来，此时轮询等待（最多 ~10s）。 */
+    /**
+     * 播放失败的处理，分两种：
+     * - **可恢复的 IO 错误**（CDN 403 签名过期、网络抖动）：失效该曲 URL 缓存、
+     *   原地 `prepare()` 重解析一次，而不是直接跳歌（成熟播放器的做法）。
+     * - **不可恢复**（无版权/VIP、确实拿不到 URL）：跳到下一首，别让队列卡死在
+     *   source error 上。队列已整单入队，通常下一首就在手边。
+     */
     private fun ExoPlayer.addErrorRecovery() {
         addListener(object : Player.Listener {
+            override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+                // 切到新曲目后清掉重试标记，让新曲目也有一次重试机会。
+                retriedItemId = null
+            }
+
             override fun onPlayerError(error: PlaybackException) {
                 if (mediaItemCount == 0) return
+                val id = currentMediaItem?.mediaId
+
+                if (id != null && id != retriedItemId && error.isRetryableIo()) {
+                    retriedItemId = id
+                    urlSource?.invalidate(id)
+                    // error 状态停在 STATE_IDLE：需要显式 prepare() 才会重新解析并加载。
+                    prepare()
+                    play()
+                    return
+                }
+
                 if (nextMediaItemIndex != C.INDEX_UNSET) {
                     recover()
                     return
                 }
+                // 队列末尾失败：轮询等一会儿（万一是并发补队列的竞态），超时放弃。
                 recoveryJob?.cancel()
                 recoveryJob = recoveryScope.launch {
                     var attempts = 0
@@ -78,6 +115,23 @@ object PlayerHolder {
                 }
             }
         })
+    }
+
+    /** 该错误是否值得"失效 URL + 原地重试"（IO/HTTP/网络类），排除"无 URL 可播"。 */
+    private fun PlaybackException.isRetryableIo(): Boolean {
+        var t: Throwable? = this
+        while (t != null) {
+            if (t is NoPlayableUrlException) return false
+            t = t.cause
+        }
+        return when (errorCode) {
+            PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+            PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
+            -> true
+            else -> false
+        }
     }
 
     private fun ExoPlayer.recover() {
@@ -157,8 +211,7 @@ object PlayerHolder {
             if (id == null) {
                 dataSpec
             } else {
-                val url = urlResolver?.invoke(id)
-                    ?: throw IOException("no playable url for song $id")
+                val url = urlSource?.resolve(id) ?: throw NoPlayableUrlException(id)
                 dataSpec.withUri(Uri.parse(url))
             }
         }

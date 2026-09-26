@@ -39,6 +39,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -61,6 +63,9 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
@@ -68,8 +73,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -122,14 +130,17 @@ import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
 import com.thripleq.nume.Home
 import com.thripleq.nume.Profile
 import com.thripleq.nume.Search
+import com.thripleq.nume.core.playback.PlaybackPreferences
 import com.thripleq.nume.core.playback.PlayerHolder
 import com.thripleq.nume.ui.components.ShimmerImagePlaceholder
 import kotlinx.coroutines.CoroutineScope
@@ -1239,6 +1250,8 @@ private fun PlayerPageContent(
 ) {
     var seekPending by remember { mutableStateOf(false) }
     var dragMs by remember { mutableLongStateOf(0L) }
+    var queueOpen by remember { mutableStateOf(false) }
+    var settingsOpen by remember { mutableStateOf(false) }
     val state = rememberPlayerState(player)
     // 进度是高频状态：单独订阅（拖动时冻结，避免轮询跟手指打架）。
     val positionMs by rememberPlayerPosition(player) { seekPending }
@@ -1339,7 +1352,7 @@ private fun PlayerPageContent(
                     Icon(Icons.Filled.Chat, "评论", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            IconButton(onClick = onPlaceholderAction, modifier = Modifier.size(40.dp)) {
+            IconButton(onClick = { queueOpen = true }, modifier = Modifier.size(40.dp)) {
                 Icon(
                     Icons.Filled.QueueMusic,
                     "播放列表",
@@ -1479,18 +1492,20 @@ private fun PlayerPageContent(
                 active = state.repeatMode != Player.REPEAT_MODE_OFF,
                 onClick = { PlayerHolder.cycleRepeat(player) },
             )
-            FullChip(
-                icon = Icons.Filled.Bedtime,
-                contentDescription = "定时关闭",
-                active = false,
-                onClick = onPlaceholderAction,
-            )
+            SleepTimerChip(player = player)
             FullChip(
                 icon = Icons.Filled.MoreVert,
                 contentDescription = "更多",
                 active = false,
-                onClick = onPlaceholderAction,
+                onClick = { settingsOpen = true },
             )
+        }
+
+        if (queueOpen) {
+            PlayerQueueSheet(player = player, onDismiss = { queueOpen = false })
+        }
+        if (settingsOpen) {
+            PlayerSettingsSheet(onDismiss = { settingsOpen = false })
         }
 
         state.errorText?.let {
@@ -1532,6 +1547,186 @@ private fun FullChip(
         ),
     ) {
         Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(22.dp))
+    }
+}
+
+/**
+ * 定时关闭：点开选择时长，倒计时结束后暂停。用墙钟（System.currentTimeMillis）判定，
+ * 而不是 delay 累加 —— 进程被挂起/系统休眠时 delay 会漂移，墙钟不会。
+ */
+@Composable
+private fun SleepTimerChip(player: Player) {
+    var endAt by remember { mutableLongStateOf(0L) }
+    var menuOpen by remember { mutableStateOf(false) }
+
+    LaunchedEffect(endAt) {
+        if (endAt == 0L) return@LaunchedEffect
+        while (true) {
+            if (System.currentTimeMillis() >= endAt) {
+                player.pause()
+                endAt = 0L
+                return@LaunchedEffect
+            }
+            delay(1000)
+        }
+    }
+
+    Box {
+        FullChip(
+            icon = Icons.Filled.Bedtime,
+            contentDescription = "定时关闭",
+            active = endAt > 0L,
+            onClick = { menuOpen = true },
+        )
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            listOf(0 to "关闭定时", 15 to "15 分钟", 30 to "30 分钟", 60 to "60 分钟", 90 to "90 分钟")
+                .forEach { (min, label) ->
+                    DropdownMenuItem(
+                        text = { Text(label) },
+                        onClick = {
+                            endAt = if (min == 0) 0L
+                            else System.currentTimeMillis() + min * 60_000L
+                            menuOpen = false
+                        },
+                    )
+                }
+        }
+    }
+}
+
+/** 播放队列面板：列出当前队列、高亮在播曲目、点按跳转。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PlayerQueueSheet(player: Player, onDismiss: () -> Unit) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var count by remember { mutableIntStateOf(player.mediaItemCount) }
+    var current by remember { mutableIntStateOf(player.currentMediaItemIndex) }
+    LaunchedEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+                count = player.mediaItemCount
+                current = player.currentMediaItemIndex
+            }
+
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                current = player.currentMediaItemIndex
+            }
+        }
+        player.addListener(listener)
+        try {
+            while (true) {
+                count = player.mediaItemCount
+                current = player.currentMediaItemIndex
+                delay(500)
+            }
+        } finally {
+            player.removeListener(listener)
+        }
+    }
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Text(
+            text = "播放队列 · ${if (count == 0) 0 else current + 1}/$count",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+        )
+        LazyColumn(modifier = Modifier.fillMaxWidth()) {
+            items(count) { i ->
+                val meta = player.getMediaItemAt(i).mediaMetadata
+                val isCurrent = i == current
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            player.seekToDefaultPosition(i)
+                            player.play()
+                        }
+                        .padding(horizontal = 20.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = (i + 1).toString(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isCurrent) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.width(28.dp),
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = meta.title?.toString() ?: "未知曲目",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (isCurrent) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        val artist = meta.artist?.toString().orEmpty()
+                        if (artist.isNotEmpty()) {
+                            Text(
+                                text = artist,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+/** 播放设置：目前只有音质档位（写入 [PlaybackPreferences]，[PlaybackUrls] 解析时读取）。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PlayerSettingsSheet(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var quality by remember { mutableStateOf(PlaybackPreferences.quality(context)) }
+    val labels = mapOf(
+        "standard" to "标准",
+        "higher" to "较高",
+        "exhigh" to "极高",
+        "lossless" to "无损",
+    )
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Text(
+            text = "播放音质",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+        )
+        PlaybackPreferences.QUALITIES.forEach { q ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        quality = q
+                        PlaybackPreferences.setQuality(context, q)
+                    }
+                    .padding(horizontal = 20.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(
+                    selected = quality == q,
+                    onClick = {
+                        quality = q
+                        PlaybackPreferences.setQuality(context, q)
+                    },
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = labels[q] ?: q,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+        }
+        Spacer(Modifier.height(24.dp))
     }
 }
 
