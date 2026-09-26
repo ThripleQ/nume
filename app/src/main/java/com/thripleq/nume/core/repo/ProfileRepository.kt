@@ -41,7 +41,11 @@ data class PlaylistSummary(
 data class ProfileData(
     val account: Account,
     val likedCount: Int,
+    /** 喜欢的音乐代表封面 = 首首喜欢曲目的专辑封面（与面板 banner 同源，展开时封面不换图）。 */
+    val likedCoverUrl: String?,
     val purchasedSongCount: Int,
+    /** 已购代表封面 = 首首已购曲目的专辑封面（与面板 banner 同源）。 */
+    val purchasedCoverUrl: String?,
     val purchasedAlbums: List<Album>,
     val subscribedPlaylists: List<PlaylistSummary>,
     val createdPlaylists: List<PlaylistSummary>,
@@ -139,10 +143,16 @@ class ProfileRepository @Inject constructor(
         val purchasedAlbums = async { purchasedAlbums() }
         val playlists = async { playlists(account.uid) }
         val (subscribedPlaylists, createdPlaylists) = playlists.await()
+        // 代表封面取首曲专辑封面：网易云合集（喜欢/已购）的 coverUrl 就是它，
+        // 这样「我的」大卡与展开面板的 banner 是同一张图，hero 交接时封面不换图。
+        val likedList = liked.await()
+        val purchasedSongList = purchasedSongs.await()
         val data = ProfileData(
             account = account,
-            likedCount = liked.await().size,
-            purchasedSongCount = purchasedSongs.await().size,
+            likedCount = likedList.size,
+            likedCoverUrl = likedList.firstOrNull()?.artworkUrl,
+            purchasedSongCount = purchasedSongList.size,
+            purchasedCoverUrl = purchasedSongList.firstOrNull()?.artworkUrl,
             purchasedAlbums = purchasedAlbums.await(),
             subscribedPlaylists = subscribedPlaylists,
             createdPlaylists = createdPlaylists,

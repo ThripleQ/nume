@@ -9,13 +9,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -28,7 +27,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.ShoppingCart
@@ -52,7 +50,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -69,7 +66,8 @@ import coil.request.ImageRequest
 import com.thripleq.nume.core.repo.Account
 import com.thripleq.nume.core.repo.PlaylistSummary
 import com.thripleq.nume.core.repo.ProfileData
-import com.thripleq.nume.ui.components.ExpandableShell
+import com.thripleq.nume.ui.components.BigCoverVisual
+import com.thripleq.nume.ui.components.CoverExpandShell
 import com.thripleq.nume.ui.components.ShimmerImagePlaceholder
 import com.thripleq.nume.ui.components.SkeletonBox
 import com.thripleq.nume.ui.components.SkeletonLine
@@ -78,10 +76,9 @@ import com.thripleq.nume.ui.profile.ProfileViewModel
 import com.valentinilk.shimmer.shimmer
 
 /**
- * 我的页：四颗胶囊（喜欢的音乐 / 已购 / 创建的歌单 / 收藏的歌单）。
- * 每一颗都是「胶囊 → 全屏面板」：点击任意胶囊，从胶囊位置伸展成全屏列表面板
- * （[ExpandableShell]）。喜欢的音乐 / 已购是曲目列表；创建 / 收藏是歌单网格面板，
- * 点网格内的歌单再进入该歌单的曲目列表（navigation）。
+ * 我的页：2×2 大卡（喜欢的音乐 / 已购 / 创建的歌单 / 收藏的歌单），风格同探索页大封面卡。
+ * 每张卡点开都是「大卡 → 全屏面板」（[CoverExpandShell]），hero 封面 morph 到内容里的 banner 封面。
+ * 喜欢的音乐 / 已购是曲目列表；创建 / 收藏是歌单网格面板，点网格内的歌单再进入该歌单的曲目列表。
  *
  * 底部落地岛全程常驻；面板内列表不再抬岛让位，内容自然滚到岛下方。
  */
@@ -103,7 +100,7 @@ fun ProfileScreen(
     val shellOpen = panel != null
     LaunchedEffect(shellOpen) { onShellOpenChange(shellOpen) }
     DisposableEffect(Unit) { onDispose { onShellOpenChange(false) } }
-    // 被点击胶囊的屏幕坐标（ExpandableShell 动画起点；点哪颗就从哪颗起跳）。
+    // 被点击大卡的屏幕坐标（CoverExpandShell 动画起点；点哪张就从哪张起跳）。
     var panelRect by remember { mutableStateOf<Rect?>(null) }
     val uid = (state as? ProfileUiState.LoggedIn)?.data?.account?.uid?.toString()
     // 胶囊壳底部让位量 = 导航岛实时高度（dp，由 PlayerCapsule 上报，含拉手+nav行+手势条 inset）。
@@ -137,14 +134,14 @@ fun ProfileScreen(
             }
         }
 
-        // 全屏列表面板：从被点击胶囊的位置伸展成全屏。
+        // 全屏列表面板：从被点击大卡的位置伸展成全屏（hero 封面 morph 到 banner 封面）。
         panel?.let { target ->
             ProfilePanel(
                 target = target,
                 uid = uid,
                 onOpenPlayer = onOpenPlayer,
                 onOpenTracks = onOpenTracks,
-                recessedBottom = islandClearance,
+                bottomPadding = islandClearance + 16.dp,
                 capsuleRect = panelRect,
                 onDismiss = { panel = null },
             )
@@ -154,11 +151,28 @@ fun ProfileScreen(
 
 /** 我的页可打开的全屏面板类型。 */
 private sealed interface ProfilePanel {
+    /** 展开壳 hero 封面（与起点大卡同源）。 */
+    val coverUrl: String?
+
+    /** 内容属性图标：卡片水印 / hero 水印 / banner 缺封面兜底三处共用。 */
+    val icon: ImageVector
+
     /** 曲目列表（喜欢的音乐 / 已购）。 */
-    data class Tracks(val source: String, val id: String, val title: String) : ProfilePanel
+    data class Tracks(
+        val source: String,
+        val id: String,
+        val title: String,
+        override val coverUrl: String?,
+        override val icon: ImageVector,
+    ) : ProfilePanel
 
     /** 歌单网格（创建 / 收藏）。 */
-    data class Playlists(val title: String, val playlists: List<PlaylistSummary>) : ProfilePanel
+    data class Playlists(
+        val title: String,
+        val playlists: List<PlaylistSummary>,
+        override val coverUrl: String?,
+        override val icon: ImageVector,
+    ) : ProfilePanel
 }
 
 /* ── header states ─────────────────────────────────────── */
@@ -223,26 +237,16 @@ private fun LoggedOutContent(onLogin: () -> Unit) {
             LoginCard(onLogin)
             Spacer(Modifier.height(16.dp))
 
-            PlaceholderSectionRow(
-                icon = Icons.Filled.Favorite,
-                title = "喜欢的音乐",
-                onLogin = onLogin,
+            // 未登录也摆出与已登录同构的 2×2 大卡，点击引导登录。
+            ProfileCardGrid(
+                entries = listOf(
+                    ProfileCardEntry(Icons.Filled.Favorite, "喜欢的音乐", "登录后查看", null),
+                    ProfileCardEntry(Icons.Filled.ShoppingCart, "已购", "登录后查看", null),
+                    ProfileCardEntry(Icons.Filled.List, "创建的歌单", "登录后查看", null),
+                    ProfileCardEntry(Icons.Filled.Star, "收藏的歌单", "登录后查看", null),
+                ),
+                onClick = { _, _ -> onLogin() },
             )
-            PlaceholderSectionRow(
-                icon = Icons.Filled.ShoppingCart,
-                title = "已购",
-                onLogin = onLogin,
-            )
-
-            Spacer(Modifier.height(12.dp))
-            PlaceholderSectionHeader("收藏的歌单")
-            Spacer(Modifier.height(8.dp))
-            PlaceholderPlaylistGrid(onLogin)
-
-            Spacer(Modifier.height(16.dp))
-            PlaceholderSectionHeader("创建的歌单")
-            Spacer(Modifier.height(8.dp))
-            PlaceholderPlaylistGrid(onLogin)
         }
     }
 }
@@ -296,122 +300,6 @@ private fun LoginCard(onLogin: () -> Unit) {
     }
 }
 
-@Composable
-private fun PlaceholderSectionRow(
-    icon: ImageVector,
-    title: String,
-    onLogin: () -> Unit,
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onLogin),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-        ) {
-            Box(
-                Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    icon,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-            Spacer(Modifier.width(14.dp))
-            Text(
-                title,
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                "登录后查看",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                "›",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 8.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun PlaceholderPlaylistGrid(onLogin: () -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        repeat(2) {
-            PlaceholderPlaylistCell(
-                onLogin = onLogin,
-                modifier = Modifier.weight(1f),
-            )
-        }
-    }
-}
-
-@Composable
-private fun PlaceholderPlaylistCell(
-    onLogin: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onLogin),
-    ) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(160.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(
-                    Icons.Filled.List,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(32.dp),
-                )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "未登录",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        Spacer(Modifier.height(6.dp))
-        Box(
-            Modifier
-                .fillMaxWidth(0.8f)
-                .height(12.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        )
-        Spacer(Modifier.height(6.dp))
-        Box(
-            Modifier
-                .fillMaxWidth(0.45f)
-                .height(10.dp)
-                .clip(RoundedCornerShape(5.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        )
-    }
-}
-
 /* ── logged-in content ─────────────────────────────────── */
 
 @Composable
@@ -428,165 +316,129 @@ private fun LoggedInContent(
             UserCard(data.account)
             Spacer(Modifier.height(8.dp))
 
-            // 四颗胶囊：点击各自打开对应全屏面板，从被点击那颗的位置撑开转场。
-            ClickableCapsule(
-                icon = Icons.Filled.Favorite,
-                title = "喜欢的音乐",
-                summary = data.likedCount.toString(),
-                onClick = { rect ->
-                    onOpenPanel(
-                        ProfilePanel.Tracks(
-                            source = "liked",
-                            id = "",
-                            title = "喜欢的音乐",
-                        ),
-                        rect,
-                    )
-                },
+            // 2×2 大卡：与探索页大封面卡同风格（封面 + 底部标题/数量 + 内容属性水印），
+            // 点击从该卡位置撑开对应全屏面板。
+            val panels = listOf(
+                ProfilePanel.Tracks(
+                    "liked", "", "喜欢的音乐",
+                    coverUrl = data.likedCoverUrl,
+                    icon = Icons.Filled.Favorite,
+                ),
+                ProfilePanel.Tracks(
+                    "purchased", "", "已购",
+                    coverUrl = data.purchasedCoverUrl,
+                    icon = Icons.Filled.ShoppingCart,
+                ),
+                ProfilePanel.Playlists(
+                    "创建的歌单",
+                    data.createdPlaylists,
+                    coverUrl = data.createdPlaylists.firstOrNull()?.coverUrl,
+                    icon = Icons.Filled.List,
+                ),
+                ProfilePanel.Playlists(
+                    "收藏的歌单",
+                    data.subscribedPlaylists,
+                    coverUrl = data.subscribedPlaylists.firstOrNull()?.coverUrl,
+                    icon = Icons.Filled.Star,
+                ),
             )
-
-            Spacer(Modifier.height(8.dp))
-
-            ClickableCapsule(
-                icon = Icons.Filled.ShoppingCart,
-                title = "已购",
-                summary = (data.purchasedSongCount + data.purchasedAlbums.size).toString(),
-                onClick = { rect ->
-                    onOpenPanel(
-                        ProfilePanel.Tracks(
-                            source = "purchased",
-                            id = "",
-                            title = "已购",
-                        ),
-                        rect,
-                    )
-                },
+            val entries = listOf(
+                ProfileCardEntry(
+                    Icons.Filled.Favorite,
+                    "喜欢的音乐",
+                    "${data.likedCount} 首",
+                    data.likedCoverUrl,
+                ),
+                ProfileCardEntry(
+                    Icons.Filled.ShoppingCart,
+                    "已购",
+                    "${data.purchasedSongCount + data.purchasedAlbums.size} 项",
+                    data.purchasedCoverUrl,
+                ),
+                ProfileCardEntry(
+                    Icons.Filled.List,
+                    "创建的歌单",
+                    "${data.createdPlaylists.size} 个歌单",
+                    data.createdPlaylists.firstOrNull()?.coverUrl,
+                ),
+                ProfileCardEntry(
+                    Icons.Filled.Star,
+                    "收藏的歌单",
+                    "${data.subscribedPlaylists.size} 个歌单",
+                    data.subscribedPlaylists.firstOrNull()?.coverUrl,
+                ),
             )
+            ProfileCardGrid(entries = entries, onClick = { i, rect -> onOpenPanel(panels[i], rect) })
+        }
+    }
+}
 
-            Spacer(Modifier.height(8.dp))
+/** 「我的」大卡的展示数据。 */
+private data class ProfileCardEntry(
+    val icon: ImageVector,
+    val title: String,
+    val count: String,
+    val coverUrl: String?,
+)
 
-            ClickableCapsule(
-                icon = Icons.Filled.List,
-                title = "创建的歌单",
-                summary = data.createdPlaylists.size.toString(),
-                onClick = { rect ->
-                    onOpenPanel(
-                        ProfilePanel.Playlists(
-                            title = "创建的歌单",
-                            playlists = data.createdPlaylists,
-                        ),
-                        rect,
+/** 2×2 大卡网格：每行两张，行间距 12dp；奇数个时末行留空（[ProfileBigCard] 自带 weight）。 */
+@Composable
+private fun ProfileCardGrid(
+    entries: List<ProfileCardEntry>,
+    onClick: (Int, Rect?) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        entries.chunked(2).forEachIndexed { rowIndex, row ->
+            if (rowIndex > 0) Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                row.forEachIndexed { col, e ->
+                    ProfileBigCard(
+                        icon = e.icon,
+                        title = e.title,
+                        count = e.count,
+                        coverUrl = e.coverUrl,
+                        onClick = { rect -> onClick(rowIndex * 2 + col, rect) },
+                        modifier = Modifier.weight(1f),
                     )
-                },
-            )
-
-            Spacer(Modifier.height(8.dp))
-
-            ClickableCapsule(
-                icon = Icons.Filled.Star,
-                title = "收藏的歌单",
-                summary = data.subscribedPlaylists.size.toString(),
-                onClick = { rect ->
-                    onOpenPanel(
-                        ProfilePanel.Playlists(
-                            title = "收藏的歌单",
-                            playlists = data.subscribedPlaylists,
-                        ),
-                        rect,
-                    )
-                },
-            )
+                }
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
         }
     }
 }
 
 /**
- * 胶囊头部行：图标（secondaryContainer 圆角块）+ 标题 + 右侧 trailing。
- * 「我的」页胶囊与展开壳的标题栏共用本实现，保证颜色与文字/图形相对位置一致
- * （衔接对齐契约：壳标题栏必须与胶囊头部同源）。
+ * 「我的」页 2×2 大卡：封面（缺则 secondaryContainer 底）+ 内容属性水印图标 +
+ * 底部渐变遮罩上的标题/数量。视觉与探索页大封面卡（[com.thripleq.nume.ui.components.BigCoverVisual]）
+ * 同参数（0.5 起渐变、0.66 黑、白字），保证两页风格统一。
+ *
+ * 点击回调携带卡片的窗口坐标 Rect，作为展开壳的起点，收起尾帧与卡片精确重合。
  */
 @Composable
-private fun CapsuleHeader(
+private fun ProfileBigCard(
     icon: ImageVector,
     title: String,
-    trailing: @Composable () -> Unit,
-    onClick: () -> Unit = {},
-    titleColor: Color = MaterialTheme.colorScheme.onSurface,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-    ) {
-        Box(
-            Modifier
-                .size(36.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.secondaryContainer),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                modifier = Modifier.size(20.dp),
-            )
-        }
-        Spacer(Modifier.width(14.dp))
-        Text(
-            title,
-            style = MaterialTheme.typography.bodyLarge,
-            color = titleColor,
-            modifier = Modifier.weight(1f),
-        )
-        trailing()
-    }
-}
-
-/** 可展开胶囊：头部（图标+标题+摘要+旋转箭头）。点击打开全屏面板（自带撑开起点）。 */
-@Composable
-private fun ClickableCapsule(
-    icon: ImageVector,
-    title: String,
-    summary: String,
+    count: String,
+    coverUrl: String?,
     onClick: (Rect?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var selfRect by remember { mutableStateOf<Rect?>(null) }
-    Card(
+    var rect by remember { mutableStateOf<Rect?>(null) }
+    // 直接复用探索页大卡组件：封面 + 底部渐变 + 白字，外加内容属性水印（缺封面即兜底主视觉）。
+    // 同一份视觉也让面板 banner / hero 传同一 watermarkIcon，三处完全一致。
+    BigCoverVisual(
+        coverUrl = coverUrl,
+        name = title,
         modifier = modifier
-            .fillMaxWidth()
+            .aspectRatio(1f)
             .onGloballyPositioned { coords ->
-                selfRect = Rect(coords.localToWindow(Offset.Zero), coords.size.toSize())
-            },
-        shape = RoundedCornerShape(18.dp),
-    ) {
-        // vertical padding 放内部：保证 onGloballyPositioned 测到的 Card bounds
-        // 就是视觉胶囊本身，展开壳收起时的终点与它精确重合。
-        Column(Modifier.padding(vertical = 4.dp)) {
-            CapsuleHeader(
-                icon = icon,
-                title = title,
-                onClick = { onClick(selfRect) },
-                trailing = {
-                    Text(
-                        summary,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Icon(
-                        Icons.Filled.KeyboardArrowDown,
-                        contentDescription = "打开",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(24.dp),
-                    )
-                },
-            )
-        }
-    }
+                rect = Rect(coords.localToWindow(Offset.Zero), coords.size.toSize())
+            }
+            .clip(RoundedCornerShape(16.dp))
+            .clickable { onClick(rect) },
+        meta = count,
+        watermarkIcon = icon,
+    )
 }
 
 @Composable
@@ -643,18 +495,9 @@ private fun UserCard(account: Account) {
     }
 }
 
-/** 未登录占位用的标题：不显示计数，与已登录区块保持同一段式。 */
-@Composable
-private fun PlaceholderSectionHeader(title: String) {
-    Text(
-        title,
-        style = MaterialTheme.typography.titleMedium,
-        color = MaterialTheme.colorScheme.onSurface,
-    )
-}
-
 /**
- * 通用全屏面板：从胶囊位置（[capsuleRect]）伸展成 `surfaceContainerHighest` 胶囊壳。
+ * 通用全屏面板：复用 [CoverExpandShell]，从大卡位置（[capsuleRect]）长成全屏，
+ * hero 封面 morph 到内容里的 banner 封面（与探索页同一套观感与契约）。
  * 内容按 [target] 分派：曲目列表 → [TrackListScreen]；歌单网格 → [PlaylistGridPanel]。
  */
 @Composable
@@ -663,83 +506,47 @@ private fun ProfilePanel(
     uid: String?,
     onOpenPlayer: () -> Unit,
     onOpenTracks: (source: String, id: String, title: String) -> Unit,
-    recessedBottom: Dp,
+    bottomPadding: Dp,
     capsuleRect: Rect?,
     onDismiss: () -> Unit,
 ) {
-    val density = LocalDensity.current
-    val statusBarTopPx = with(density) { WindowInsets.statusBars.getTop(this).toFloat() }
-
-    ExpandableShell(
+    CoverExpandShell(
         fromRect = capsuleRect,
-        fullTopPx = statusBarTopPx,
-        shapeCornerDp = 18.dp,
-        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-        recessedBottom = recessedBottom,
+        coverUrl = target.coverUrl,
+        title = target.title(),
         onDismiss = onDismiss,
-        header = { onClose ->
-            // 与胶囊头部同源（CapsuleHeader）：颜色/文字/图形相对位置一致，
-            // 收起动画最后一帧精确对齐。trailing 换为"点此收起"提示。
-            CapsuleHeader(
-                icon = target.icon(),
-                title = target.title(),
-                onClick = onClose,
-                trailing = {
-                    Text(
-                        "点此收起",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Icon(
-                        Icons.Filled.KeyboardArrowDown,
-                        contentDescription = "收起",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(24.dp),
-                    )
-                },
-            )
-        },
-        content = {
-            // 圆角窟窿：列表嵌在一圈圆角内凹区域，surface 与外壳形成凹陷对比。
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 4.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(MaterialTheme.colorScheme.surface),
-            ) {
-                when (target) {
-                    is ProfilePanel.Tracks -> {
-                        val src = if (uid != null && target.source == "liked") uid else target.id
-                        TrackListScreen(
-                            source = target.source,
-                            id = src,
-                            title = target.title,
-                            onBack = onDismiss,
-                            onOpenPlayer = onOpenPlayer,
-                            showTopBar = false,
-                            // 壳顶标题栏已示集合名，封面不再重复。
-                            showName = false,
-                            // 胶囊面板走「内容固定终态排版 + 壳裁剪露出」，封面内缩用常量，
-                            // 使列表 measure 在展开动画期间被跳过。
-                            coverInsetFollowsShell = false,
-                        )
-                    }
-                    is ProfilePanel.Playlists -> PlaylistGridPanel(
-                        title = target.title,
-                        playlists = target.playlists,
-                        onOpenTracks = onOpenTracks,
-                    )
-                }
+        watermarkIcon = target.icon,
+    ) { onCoverReady ->
+        when (target) {
+            is ProfilePanel.Tracks -> {
+                val src = if (uid != null && target.source == "liked") uid else target.id
+                TrackListScreen(
+                    source = target.source,
+                    id = src,
+                    title = target.title,
+                    onBack = onDismiss,
+                    onOpenPlayer = onOpenPlayer,
+                    showTopBar = false,
+                    // 面板走「内容固定终态排版 + 壳裁剪露出」，封面内缩用常量，
+                    // 使列表 measure 在展开动画期间被跳过（封面形变交给 hero）。
+                    coverInsetFollowsShell = false,
+                    onCoverReady = onCoverReady,
+                    previewCoverUrl = target.coverUrl,
+                    watermarkIcon = target.icon,
+                    bottomPadding = bottomPadding,
+                )
             }
-        },
-    )
-}
-
-private fun ProfilePanel.icon(): ImageVector = when (this) {
-    is ProfilePanel.Tracks -> if (source == "liked") Icons.Filled.Favorite else Icons.Filled.ShoppingCart
-    is ProfilePanel.Playlists -> Icons.Filled.List
+            is ProfilePanel.Playlists -> PlaylistGridPanel(
+                title = target.title,
+                playlists = target.playlists,
+                coverUrl = target.coverUrl,
+                watermarkIcon = target.icon,
+                onCoverReady = onCoverReady,
+                onOpenTracks = onOpenTracks,
+                bottomPadding = bottomPadding,
+            )
+        }
+    }
 }
 
 private fun ProfilePanel.title(): String = when (this) {
@@ -747,45 +554,65 @@ private fun ProfilePanel.title(): String = when (this) {
     is ProfilePanel.Playlists -> title
 }
 
-/** 歌单网格面板内容：全屏懒加载网格，点格子进歌单曲目列表。 */
+/** 歌单网格面板内容：首个 banner 封面 + 全屏懒加载网格，点格子进歌单曲目列表。
+ *  banner 位于 16dp 内缩、状态栏下 4dp（[CoverExpandShell] 的 hero 终点契约）。 */
 @Composable
 private fun PlaylistGridPanel(
     title: String,
     playlists: List<PlaylistSummary>,
+    coverUrl: String?,
+    watermarkIcon: ImageVector,
+    onCoverReady: () -> Unit,
     onOpenTracks: (source: String, id: String, name: String) -> Unit,
+    bottomPadding: Dp,
 ) {
-    if (playlists.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                "暂无歌单",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        return
-    }
     // LazyVerticalGrid 自带滚动，不再外包一层 verticalScroll + 全量 Column：
-    // 歌单多时只组合可见格，避免每帧重排整棵树（胶囊壳展开卡顿的主因之一）。
+    // 歌单多时只组合可见格，避免每帧重排整棵树。
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 16.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 0.dp, bottom = bottomPadding),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item(span = { GridItemSpan(maxLineSpan) }) {
-            Text(
-                title,
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+        item(span = { GridItemSpan(maxLineSpan) }, key = "banner") {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(16.dp)),
+            ) {
+                BigCoverVisual(
+                    coverUrl = coverUrl,
+                    name = title,
+                    modifier = Modifier.fillMaxSize(),
+                    meta = if (playlists.isEmpty()) null else "${playlists.size} 个歌单",
+                    scrimTop = 0.35f,
+                    scrimAlpha = 0.85f,
+                    requestSize = 1024,
+                    onLoadSuccess = onCoverReady,
+                    watermarkIcon = watermarkIcon,
+                )
+            }
         }
-        items(playlists, key = { it.id }) { p ->
-            PlaylistCell(
-                playlist = p,
-                onClick = { onOpenTracks("playlist", p.id, p.name) },
-                modifier = Modifier.fillMaxWidth(),
-            )
+        if (playlists.isEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        "暂无歌单",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        } else {
+            items(playlists, key = { it.id }) { p ->
+                PlaylistCell(
+                    playlist = p,
+                    onClick = { onOpenTracks("playlist", p.id, p.name) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
     }
 }

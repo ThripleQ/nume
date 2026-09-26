@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
@@ -42,6 +43,8 @@ import coil.request.ImageRequest
  * @param scrimAlpha 渐变底部黑度（0..1），保证文字可读
  * @param requestSize 解码尺寸（px）。卡片/hero 用 480（小图先顶），全屏 banner 用更大值拿到高清版。
  * @param onLoadSuccess 封面真正绘制出来（加载成功或失败落定）时回调一次；供 hero 交接。
+ * @param watermarkIcon 内容属性水印：非空时——缺封面用 `secondaryContainer` 底 + 大号图标兜底；
+ *                  有封面则在同一位置压一枚淡水印。卡片/hero/banner 传同一图标，三位一体。
  */
 @Composable
 fun BigCoverVisual(
@@ -54,6 +57,7 @@ fun BigCoverVisual(
     scrimAlpha: Float = 0.66f,
     requestSize: Int = 480,
     onLoadSuccess: (() -> Unit)? = null,
+    watermarkIcon: ImageVector? = null,
 ) {
     Box(modifier) {
         val context = LocalContext.current
@@ -79,17 +83,43 @@ fun BigCoverVisual(
             )
         } else {
             LaunchedEffect(Unit) { onLoadSuccess?.invoke() }
+            // 缺封面：有水印图标就用「secondaryContainer 底 + 内容属性图标」，与卡片同源；
+            // 否则退回旧的 MusicNote 占位（探索卡片无水印时的兜底）。
             Box(
-                Modifier.matchParentSize().background(MaterialTheme.colorScheme.surfaceVariant),
+                Modifier.matchParentSize().background(
+                    if (watermarkIcon != null) {
+                        MaterialTheme.colorScheme.secondaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant
+                    },
+                ),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    Icons.Filled.MusicNote,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(32.dp),
-                )
+                if (watermarkIcon != null) {
+                    Icon(
+                        watermarkIcon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f),
+                        modifier = Modifier.fillMaxSize(0.37f),
+                    )
+                } else {
+                    Icon(
+                        Icons.Filled.MusicNote,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(32.dp),
+                    )
+                }
             }
+        }
+        // 有封面时压一枚淡水印：与卡片同一图标、同一位置、同一比例。
+        if (watermarkIcon != null && model != null) {
+            Icon(
+                watermarkIcon,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.28f),
+                modifier = Modifier.align(Alignment.Center).fillMaxSize(0.37f),
+            )
         }
         Box(
             Modifier

@@ -47,6 +47,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
@@ -108,6 +109,8 @@ fun TrackListScreen(
      * 不必等整张列表（含分页补全）下载完才开始加载，hero 也能尽早交接。
      */
     previewCoverUrl: String? = null,
+    /** banner 缺封面时的内容属性水印图标（与入口卡片/hero 同源）。 */
+    watermarkIcon: ImageVector? = null,
     bottomPadding: Dp = 16.dp,
 ) {
     val vm: TrackListViewModel = hiltViewModel()
@@ -192,7 +195,15 @@ fun TrackListScreen(
                     // 统一 banner 头：封面是列表第一项（左右 16dp 内缩、随滚动移出），元信息叠在封面里；
                     // 列表行同样 16dp 内缩，与封面同宽。所有列表（榜单/歌单/专辑/喜欢/已购）共用此形态。
                     item(key = "header") {
-                        TrackListBannerHeader(target, vm, showName, coverInsetFollowsShell, onCoverRect, onCoverReady) { actionsTop = it }
+                        TrackListBannerHeader(
+                            target,
+                            vm,
+                            showName,
+                            coverInsetFollowsShell,
+                            onCoverRect,
+                            onCoverReady,
+                            watermarkIcon,
+                        ) { actionsTop = it }
                     }
                     itemsIndexed(
                         target.tracks,
@@ -332,6 +343,7 @@ private fun TrackListBannerHeader(
     coverInsetFollowsShell: Boolean = true,
     onCoverRect: ((Rect) -> Unit)? = null,
     onCoverReady: (() -> Unit)? = null,
+    watermarkIcon: ImageVector? = null,
     onActionsTop: (Float) -> Unit,
 ) {
     val context = LocalContext.current.applicationContext
@@ -373,6 +385,7 @@ private fun TrackListBannerHeader(
                 scrimAlpha = 0.85f,
                 requestSize = 1024,
                 onLoadSuccess = onCoverReady,
+                watermarkIcon = watermarkIcon,
             )
         }
         Spacer(Modifier.height(12.dp))

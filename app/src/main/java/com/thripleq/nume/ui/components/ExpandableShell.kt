@@ -5,16 +5,23 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.requiredWidth
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -28,15 +35,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
@@ -80,6 +90,21 @@ fun Modifier.shellInset(progress: State<Float>, maxInset: Dp): Modifier =
     }
 
 /**
+ * 顶部内缩随壳展开进度增长：语义等价于 `padding(top = inset * progress)`，
+ * 但在 **layout 阶段**读取 [progress]——宿主 composable 不会被每帧重组。
+ *
+ * 壳顶一路长到屏幕顶（0）后，用它在全屏时把内容推回状态栏下方；p=0 时内缩为 0，
+ * 内容仍与起点胶囊内部布局对齐。
+ */
+fun Modifier.shellTopInset(progress: State<Float>, insetPx: Float): Modifier =
+    layout { measurable, constraints ->
+        val top = (insetPx * progress.value).roundToInt().coerceIn(0, constraints.maxHeight)
+        val h = (constraints.maxHeight - top).coerceAtLeast(0)
+        val placeable = measurable.measure(constraints.copy(minHeight = h, maxHeight = h))
+        layout(constraints.maxWidth, h) { placeable.place(0, top) }
+    }
+
+/**
  * 通用「胶囊壳 → 全屏面板」伸展覆盖层。
  *
  * 从一个胶囊的 [fromRect]（窗口坐标 Rect）平滑伸展到全屏，再缩回原位。
@@ -98,7 +123,8 @@ fun Modifier.shellInset(progress: State<Float>, maxInset: Dp): Modifier =
  *   「完全复位」的画面真正绘制落地再调 [onDismiss]，避免最后一帧被跳过。
  *
  * @param fromRect  起点胶囊的窗口坐标 Rect；null 时用兜底几何（左/顶各 16dp、宽 328dp）
- * @param fullTopPx 展开后壳顶的窗口 Y（px），通常 = 状态栏下沿
+ * @param fullTopPx 内容需要避开的顶部高度（px），通常 = 状态栏高度。壳本身会一直长到屏幕顶
+ *                  （含状态栏那段，不再另设填充块），内容在展开期间按此值下移
  * @param shapeCornerDp  壳圆角（px 动画不插值圆角，保持胶囊观感）
  * @param containerColor 壳背景色（应与胶囊 Card 颜色一致）
  * @param recessedBottom 内容区（窟窿）底部让位量：壳本身延伸到屏幕底，
@@ -154,12 +180,14 @@ fun ExpandableShell(
     val capsuleTop = fromRect?.top ?: fullTopPx
     val capsuleWidthPx = fromRect?.width ?: with(density) { 328.dp.toPx() }
     val capsuleHeightPx = fromRect?.height ?: 0f
-    // 终点（全屏）几何：左贴 0、宽满屏；顶贴 [fullTopPx]、高到屏幕底。
-    // 壳本身延伸到屏幕最底部，让位只作用于内容区（窟窿）底部。
+    // 终点（全屏）几何：铺满整屏（顶到 0、底到屏底）。壳顶越过状态栏长到屏幕顶，
+    // 是为了让状态栏那段也属于壳本身——否则要另设一块"让位填充"，它与还在小的壳脱节，
+    // 点击瞬间像顶部突然涂色。内容再用 [shellTopInset] 下移 fullTopPx：全屏时让开状态栏，
+    // p=0 时内缩为 0、仍与起点胶囊内部布局对齐。
     val fullLeft = 0f
     val fullWidthPx = viewWidth.toFloat()
-    val fullTop = fullTopPx
-    val fullHeightPx = (viewHeight - fullTopPx).coerceAtLeast(0f)
+    val fullTop = 0f
+    val fullHeightPx = viewHeight.toFloat()
 
     var closing by remember { mutableStateOf(false) }
     val vertical = remember { Animatable(0f) }
@@ -168,6 +196,7 @@ fun ExpandableShell(
     val heroAlpha = remember { Animatable(1f) }
     // 暴露给内容的只读进度 State（Animatable 本身不是 State，用 derivedStateOf 包一层）。
     val horizontalState = remember { derivedStateOf { horizontal.value } }
+    val verticalState = remember { derivedStateOf { vertical.value } }
 
     // 外部受控进度：跟手时直接驱动壳几何（snap），不受内部动画干扰。
     // 关闭动画从当前进度续跑；打开动画仅在无外部进度时自动跑。
@@ -267,19 +296,10 @@ fun ExpandableShell(
                     }
                 },
         )
-        // 顶部让位区（状态栏高度）用壳背景色填上：壳顶停在状态栏下沿是为了内容不被系统栏遮挡，
-        // 但这段空隙若透明会露出底下页面（"漏风"）。补上背景色即可，其余不动。
-        if (fullTopPx > 0f) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(with(density) { fullTopPx.toDp() })
-                    .background(containerColor),
-            )
-        }
-        // 壳：位置/宽高全由插值驱动（graphicsLayer 平移 + 显式宽高）。
-        // 壳延伸到屏幕底，贴地直角（只顶圆角）；底部让位由内容区（窟窿）padding 实现。
-        val shellShape = RoundedCornerShape(topStart = shapeCornerDp, topEnd = shapeCornerDp)
+        // 壳：位置/宽高全由插值驱动（显式宽高 + layout 阶段平移）。
+        // 壳顶越过状态栏一直长到屏幕顶（0），状态栏那段就是壳本身；底到屏底，底角直角
+        // （只顶圆角），底部让位由内容区（窟窿）padding 实现。
+        val cornerPx = with(density) { shapeCornerDp.toPx() }
         Box(
             modifier = Modifier
                 // 壳尺寸随动画每帧变化：把 animatable 读取下沉到 layout 阶段，
@@ -300,12 +320,24 @@ fun ExpandableShell(
                         lerp(capsuleTop, fullTop, vertical.value).roundToInt(),
                     )
                 }
-                // shadow 与 clip 一样只在动画期间需要：稳态下壳顶与同色状态栏让位区齐平，
-                // 圆角及其投影都不可见。两者都会给整屏壳套一层 RenderNode/offscreen，
-                // 让滚动时整个列表每帧重录 display list——这是列表卡顿的主因。
+                // 裁剪/投影只在动画期间需要：稳态下壳铺满全屏，圆角与投影都不可见，
+                // 保留会给整屏壳套一层 RenderNode/offscreen，让滚动时整个列表每帧重录
+                // display list——这是列表卡顿的主因。
+                // 顶角圆角随展开收敛到 0：壳顶贴到屏幕顶后若还留圆角，会在屏幕两角露出底下
+                // 页面、收起裁剪时还会"跳方"。在 draw 阶段读 progress，不触发重组。
                 .then(
                     if (!settled.value || closing) {
-                        Modifier.shadow(1.dp, shellShape, clip = false).clip(shellShape)
+                        Modifier.graphicsLayer {
+                            val r = (cornerPx * (1f - vertical.value)).coerceAtLeast(0f)
+                            shape = RoundedCornerShape(
+                                topStart = r.toDp(),
+                                topEnd = r.toDp(),
+                                bottomStart = 0.dp,
+                                bottomEnd = 0.dp,
+                            )
+                            clip = true
+                            shadowElevation = 1.dp.toPx()
+                        }
                     } else {
                         Modifier
                     },
@@ -314,6 +346,9 @@ fun ExpandableShell(
         ) {
             Column(
                 Modifier
+                    // 壳顶已长到屏幕顶：内容整体下移「状态栏高度 × 展开进度」（layout 阶段读，
+                    // 不重组），全屏时正好让开状态栏，p=0 时仍与起点胶囊内部布局对齐。
+                    .shellTopInset(verticalState, fullTopPx)
                     .fillMaxSize()
                     .padding(vertical = if (contentFromStart) 0.dp else 4.dp),
             ) {
@@ -399,4 +434,87 @@ fun ExpandableShell(
             }
         }
     }
+}
+
+/**
+ * 通用「大封面卡 → 全屏内容」伸展壳：把卡片（窗口坐标 [fromRect]）长成全屏，期间用 hero 封面
+ * 从卡片位置插值到内容里的 banner 封面，首尾无缝；左上角浮一个随进度淡入的收起按钮。
+ *
+ * 探索页（歌单/榜单 → 曲目列表）与「我的」页（大卡 → 曲目列表/歌单网格）共用本组件。
+ *
+ * **对齐契约**：内容首项若是方形 banner 封面，必须位于「左右 16dp 内缩、状态栏下 4dp」处
+ * （同 [TrackListScreen] 的 banner 头）；本组件按此**预测** hero 终点矩形，不再每帧测量回写。
+ *
+ * @param coverUrl hero 封面 URL（应与起点卡片同源）；null 时 hero 用占位底
+ * @param title    hero 封面上的名字
+ * @param watermarkIcon hero 的内容属性水印图标：与起点卡片、内容 banner 传同一个，
+ *                 缺封面时三处都显示同一枚图标（否则 p=0 的 hero 与卡片对不上）
+ * @param content  面板内容；参数 `onCoverReady` 在内容里的高清 banner 封面画出来后调用，
+ *                 触发 hero 交接淡出（数据/图片未到则 hero 一直顶着）
+ */
+@Composable
+fun CoverExpandShell(
+    fromRect: Rect?,
+    coverUrl: String?,
+    title: String,
+    onDismiss: () -> Unit,
+    containerColor: Color = MaterialTheme.colorScheme.surface,
+    shapeCornerDp: Dp = 16.dp,
+    watermarkIcon: ImageVector? = null,
+    content: @Composable (onCoverReady: () -> Unit) -> Unit,
+) {
+    val density = LocalDensity.current
+    val statusBarTopPx = with(density) { WindowInsets.statusBars.getTop(density).toFloat() }
+    // hero 终态矩形用「预测值」：16dp 内缩、方形、内容顶（状态栏下 + 4dp 内边距）下方，
+    // 与内容里 banner 封面同位。不再每帧测量回写（省掉每帧 onGloballyPositioned）。
+    val coverSidePx = LocalConfiguration.current.screenWidthDp * density.density -
+        with(density) { 32.dp.toPx() }
+    val coverLeftPx = with(density) { 16.dp.toPx() }
+    val coverTopPx = statusBarTopPx + with(density) { 4.dp.toPx() }
+    val coverRect = remember {
+        mutableStateOf<Rect?>(
+            Rect(coverLeftPx, coverTopPx, coverLeftPx + coverSidePx, coverTopPx + coverSidePx),
+        )
+    }
+    val coverReady = remember { mutableStateOf(false) }
+
+    ExpandableShell(
+        fromRect = fromRect,
+        fullTopPx = statusBarTopPx,
+        shapeCornerDp = shapeCornerDp,
+        containerColor = containerColor,
+        contentFromStart = false,
+        heroTargetRect = coverRect,
+        heroReady = coverReady,
+        heroContent = {
+            BigCoverVisual(coverUrl, title, Modifier.fillMaxSize(), watermarkIcon = watermarkIcon)
+        },
+        onDismiss = onDismiss,
+        header = {},
+        content = {
+            Box(Modifier.fillMaxSize()) {
+                content { coverReady.value = true }
+                // 关闭按钮：浮在左上、不随列表滚，随展开进度淡入（p=0 不可见、不响应点击）。
+                val progress = LocalShellProgress.current
+                Box(
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .padding(12.dp)
+                        .size(36.dp)
+                        .graphicsLayer { alpha = progress.value }
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.38f))
+                        .clickable { if (progress.value > 0.5f) onDismiss() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Filled.KeyboardArrowDown,
+                        contentDescription = "收起",
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
+            }
+        },
+    )
 }

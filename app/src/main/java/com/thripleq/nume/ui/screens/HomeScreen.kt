@@ -9,22 +9,20 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
@@ -44,12 +42,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -62,8 +57,7 @@ import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
 import com.thripleq.nume.core.repo.Track
 import com.thripleq.nume.ui.components.BigCoverVisual
-import com.thripleq.nume.ui.components.ExpandableShell
-import com.thripleq.nume.ui.components.LocalShellProgress
+import com.thripleq.nume.ui.components.CoverExpandShell
 import com.thripleq.nume.ui.components.ShimmerImagePlaceholder
 import com.thripleq.nume.ui.components.SkeletonBox
 import com.thripleq.nume.ui.components.SkeletonLine
@@ -157,16 +151,12 @@ private fun HomeContent(
         // 逐块渲染：null = 这块还没就绪，整个区块（含标题）不显示，避免未就绪
         // 时先闪出空标题/登录引导；就绪后再按是否有内容决定渲染。
 
-        // 每日推荐歌曲（小封面单曲行）
+        // 每日推荐歌曲（小封面单曲行，每页 4 首左右翻页）
         val daily = data.dailySongs
         if (daily != null) {
             item(key = "h_daily") { SectionHeader("每日推荐歌曲") }
             if (daily.isNotEmpty()) {
-                itemsIndexed(
-                    daily,
-                    key = { i, t -> "daily_${t.id}_$i" },
-                    contentType = { _, _ -> "track" },
-                ) { i, t -> SmallTrackRow(t) { onPlay(daily, i) } }
+                item(key = "daily_pager") { PagedTrackSection(tracks = daily, onPlay = onPlay) }
             } else {
                 item(key = "login_daily") { LoginPrompt(onWebLogin) }
             }
@@ -204,16 +194,12 @@ private fun HomeContent(
             }
         }
 
-        // 最近播放（小封面单曲行）
+        // 最近播放（小封面单曲行，每页 4 首左右翻页）
         val recent = data.recentSongs
         if (recent != null) {
             item(key = "h_recent") { SectionHeader("最近播放") }
             if (recent.isNotEmpty()) {
-                itemsIndexed(
-                    recent,
-                    key = { i, t -> "recent_${t.id}_$i" },
-                    contentType = { _, _ -> "track" },
-                ) { i, t -> SmallTrackRow(t) { onPlay(recent, i) } }
+                item(key = "recent_pager") { PagedTrackSection(tracks = recent, onPlay = onPlay) }
             } else {
                 item(key = "login_recent") { LoginPrompt(onWebLogin) }
             }
@@ -361,6 +347,61 @@ private fun SmallTrackRow(track: Track, onClick: () -> Unit) {
     }
 }
 
+/** 每页固定 [TRACKS_PER_PAGE] 首的整页翻页列表：页面吸附，左右滑动切页；多页时显示页码点。
+ *  首屏即满页，Pager 高度由第一页确定，后续不满的尾页顶对齐，翻页时高度不跳动。 */
+private const val TRACKS_PER_PAGE = 4
+
+@Composable
+private fun PagedTrackSection(
+    tracks: List<Track>,
+    onPlay: (List<Track>, Int) -> Unit,
+) {
+    val pageCount = (tracks.size + TRACKS_PER_PAGE - 1) / TRACKS_PER_PAGE
+    val pagerState = rememberPagerState(pageCount = { pageCount })
+    Column(Modifier.fillMaxWidth()) {
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxWidth(),
+        ) { page ->
+            val start = page * TRACKS_PER_PAGE
+            val end = (start + TRACKS_PER_PAGE).coerceAtMost(tracks.size)
+            Column(Modifier.fillMaxWidth()) {
+                for (i in start until end) {
+                    val track = tracks[i]
+                    SmallTrackRow(track) { onPlay(tracks, i) }
+                }
+            }
+        }
+        if (pageCount > 1) PagerDots(pageCount = pageCount, current = pagerState.currentPage)
+    }
+}
+
+/** 页码点：[current] 用主色加大，其余用淡色。 */
+@Composable
+private fun PagerDots(pageCount: Int, current: Int) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        repeat(pageCount) { i ->
+            val selected = i == current
+            Box(
+                Modifier
+                    .padding(horizontal = 3.dp)
+                    .size(if (selected) 7.dp else 6.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (selected) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.outlineVariant,
+                    ),
+            )
+        }
+    }
+}
+
 @Composable
 private fun LoginPrompt(onLogin: () -> Unit) {
     Row(
@@ -387,9 +428,8 @@ private fun LoginPrompt(onLogin: () -> Unit) {
     }
 }
 
-/** 大封面卡 → 全屏列表：从卡片位置伸展；封面是列表第一项（banner 头），随列表滚动移出。
- *  内容走「固定终态排版 + 壳裁剪露出」以免每帧重排列表；首尾与卡片的对齐由 hero 封面覆盖层
- *  （[ExpandableShell.heroContent]）恢复——p=0 时 hero 恰好等于卡片，p=1 时与 banner 封面重合。 */
+/** 大封面卡 → 全屏列表：复用通用 [CoverExpandShell]；内容为曲目列表（banner 头作 hero 终点）。
+ *  契约见 [CoverExpandShell]——封面左右 16dp 内缩、状态栏下 4dp。 */
 @Composable
 private fun HomeExpandShell(
     target: ExpandTarget,
@@ -397,69 +437,26 @@ private fun HomeExpandShell(
     onOpenPlayer: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val density = LocalDensity.current
-    val statusBarTopPx = with(density) { WindowInsets.statusBars.getTop(this).toFloat() }
-    // hero 的终态矩形直接用「预测值」：16dp 内缩、方形、内容顶（状态栏下 + 4dp 内边距）下方，
-    // 与 TrackListBannerHeader 的封面同位。不再每帧测量回写（省掉每帧 onGloballyPositioned）。
-    val coverSidePx = LocalConfiguration.current.screenWidthDp * density.density -
-        with(density) { 32.dp.toPx() }
-    val coverLeftPx = with(density) { 16.dp.toPx() }
-    val coverTopPx = statusBarTopPx + with(density) { 4.dp.toPx() }
-    val coverRect = remember {
-        mutableStateOf<Rect?>(
-            Rect(coverLeftPx, coverTopPx, coverLeftPx + coverSidePx, coverTopPx + coverSidePx),
+    CoverExpandShell(
+        fromRect = target.rect,
+        coverUrl = target.coverUrl,
+        title = target.title,
+        onDismiss = onDismiss,
+    ) { onCoverReady ->
+        TrackListScreen(
+            source = target.source,
+            id = target.id,
+            title = target.title,
+            onBack = onDismiss,
+            onOpenPlayer = onOpenPlayer,
+            showTopBar = false,
+            // 封面内缩用常量（不随壳每帧重排 banner/LazyColumn）——封面形变交给 hero。
+            coverInsetFollowsShell = false,
+            onCoverReady = onCoverReady,
+            previewCoverUrl = target.coverUrl,
+            bottomPadding = bottomPadding,
         )
     }
-    val coverReady = remember { mutableStateOf(false) }
-    ExpandableShell(
-        fromRect = target.rect,
-        fullTopPx = statusBarTopPx,
-        shapeCornerDp = 16.dp,
-        containerColor = MaterialTheme.colorScheme.surface,
-        contentFromStart = false,
-        heroTargetRect = coverRect,
-        heroReady = coverReady,
-        heroContent = { BigCoverVisual(target.coverUrl, target.title, Modifier.fillMaxSize()) },
-        onDismiss = onDismiss,
-        header = {},
-        content = {
-            Box(Modifier.fillMaxSize()) {
-                TrackListScreen(
-                    source = target.source,
-                    id = target.id,
-                    title = target.title,
-                    onBack = onDismiss,
-                    onOpenPlayer = onOpenPlayer,
-                    showTopBar = false,
-                    // 封面内缩用常量（不随壳每帧重排 banner/LazyColumn）——封面形变交给 hero。
-                    coverInsetFollowsShell = false,
-                    onCoverReady = { coverReady.value = true },
-                    previewCoverUrl = target.coverUrl,
-                    bottomPadding = bottomPadding,
-                )
-                // 关闭按钮：浮在左上、不随列表滚，随展开进度淡入（p=0 不可见、不响应点击）。
-                val progress = LocalShellProgress.current
-                Box(
-                    Modifier
-                        .align(Alignment.TopStart)
-                        .padding(12.dp)
-                        .size(36.dp)
-                        .graphicsLayer { alpha = progress.value }
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.38f))
-                        .clickable { if (progress.value > 0.5f) onDismiss() },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Filled.KeyboardArrowDown,
-                        contentDescription = "收起",
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp),
-                    )
-                }
-            }
-        },
-    )
 }
 
 @Composable
@@ -490,7 +487,7 @@ private fun HomeSkeleton(bottomPadding: Dp) {
         }
 
         SkeletonSectionHeader()
-        repeat(3) { SkeletonTrackRow(artSize = 52.dp) }
+        repeat(4) { SkeletonTrackRow(artSize = 52.dp) }
 
         SkeletonSectionHeader()
         SkeletonCarousel()
@@ -499,7 +496,7 @@ private fun HomeSkeleton(bottomPadding: Dp) {
         SkeletonCarousel()
 
         SkeletonSectionHeader()
-        repeat(3) { SkeletonTrackRow(artSize = 52.dp) }
+        repeat(4) { SkeletonTrackRow(artSize = 52.dp) }
     }
 }
 
