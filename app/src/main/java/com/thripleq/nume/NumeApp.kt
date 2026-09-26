@@ -107,6 +107,8 @@ fun NumeApp() {
     var listPlayAll by remember { mutableStateOf<(() -> Unit)?>(null) }
     val isListDetail = destination?.hasRoute<TrackListDestination>() == true ||
         destination?.hasRoute<ChartDestination>() == true
+    // 网页登录是全屏页：不挂 dock，否则迷你条/底部导航会盖住官方登录页、挡住底部操作。
+    val isWebLogin = destination?.hasRoute<WebLogin>() == true
 
     // dock 总高（dp）：PlayerDock 上报，供 Profile 展开壳底部让位。
     var islandHeightDp by remember { mutableStateOf(0f) }
@@ -218,26 +220,29 @@ fun NumeApp() {
         }
 
         // 常驻 dock + 全屏播放页（合体，单点挂载）：覆盖在内容层之上。
-        PlayerDock(
-            player = player,
-            state = dockState,
-            selected = selectedTab,
-            onSelectTab = { tab ->
-                navController.navigate(tab.route) {
-                    popUpTo(navController.graph.findStartDestination().id) {
-                        saveState = true
+        // 网页登录页是全屏 WebView，不挂 dock，避免遮挡官方页面操作。
+        if (!isWebLogin) {
+            PlayerDock(
+                player = player,
+                state = dockState,
+                selected = selectedTab,
+                onSelectTab = { tab ->
+                    navController.navigate(tab.route) {
+                        popUpTo(navController.graph.findStartDestination().id) {
+                            saveState = true
+                        }
+                        launchSingleTop = true
+                        restoreState = true
                     }
-                    launchSingleTop = true
-                    restoreState = true
-                }
-            },
-            actionVisible = isListDetail && listActionsOffscreen,
-            navVisible = !shellOpen,
-            onPlayAll = { listPlayAll?.invoke() },
-            onPlaceholderAction = {
-                android.widget.Toast.makeText(context, "开发中", android.widget.Toast.LENGTH_SHORT).show()
-            },
-            onIslandHeightChange = { islandHeightDp = it },
-        )
+                },
+                actionVisible = isListDetail && listActionsOffscreen,
+                navVisible = !shellOpen,
+                onPlayAll = { listPlayAll?.invoke() },
+                onPlaceholderAction = {
+                    android.widget.Toast.makeText(context, "开发中", android.widget.Toast.LENGTH_SHORT).show()
+                },
+                onIslandHeightChange = { islandHeightDp = it },
+            )
+        }
     }
 }
