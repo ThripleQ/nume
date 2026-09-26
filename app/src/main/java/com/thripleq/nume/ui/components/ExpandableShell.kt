@@ -82,6 +82,17 @@ val LocalShellSettled: androidx.compose.runtime.ProvidableCompositionLocal<State
     staticCompositionLocalOf { mutableStateOf(true) }
 
 /**
+ * hero 覆盖层当前的不透明度（[State]，只在 draw 阶段读取）：
+ * 1 = 低清 hero 顶着（交接前），0 = 已交接给内容里的高清封面。
+ *
+ * 内容里的 banner / 骨架封面必须据此**与 hero 互补**：`alpha = 1 - 该值`。否则展开期间
+ * 会出现「hero 与内容封面同时可见」的两层重影（hero 从卡片飞向 banner，期间与固定排版的
+ * 内容封面错位重叠）。非壳环境默认 0，内容封面恒 1、照常显示。
+ */
+val LocalShellHeroAlpha: androidx.compose.runtime.ProvidableCompositionLocal<State<Float>> =
+    staticCompositionLocalOf { mutableStateOf(0f) }
+
+/**
  * 水平内缩随壳展开进度收缩：语义等价于 `padding(horizontal = maxInset * progress)`，
  * 但在 **layout 阶段**读取 [progress]——因此宿主 composable 不会被每帧重组，
  * 只触发这一处重排。banner 封面 / 骨架封面用它替代组合期的 `16.dp * p`。
@@ -166,8 +177,9 @@ fun Modifier.shellTopInset(progress: State<Float>, insetPx: Float): Modifier =
  * @param heroReady     高清封面是否已绘制出来（[State]，只在 layout/draw 阶段读取）。为 true 时 hero
  *                      原地渐变淡出、交接给内容里的高清封面；为 false（数据/图片未到）时 hero 一直顶着。
  * @param heroContent   hero 覆盖层内容（通常与起点卡片封面同源）。null 则不绘制 hero。
- * @param heroCornerDp  hero 圆角（四角）。壳只圆顶角、底角是直角，hero 必须自带四角圆角，
- *                      否则 p=0 时底角与卡片对不上；应等于起点卡片/终态封面的圆角。
+ * @param heroCornerDp  hero 封面圆角（四角），由 hero 自己那层 `.clip` 施加，与壳的圆角
+ *                      （[shapeCornerDp]）相互独立——保证 p=0 时与起点卡片、p=1 时与终态
+ *                      封面逐像素吻合；应等于起点卡片/终态封面的圆角。
  * @param onDismiss 关闭动画完全结束、壳复位后才回调（调用方借此移除本组件）
  * @param header    壳顶部标题栏（必须与胶囊头部同源）；接收 [onClose]，收起按钮应调它触发关闭动画。
  *                  [contentFromStart] 为 true 时不渲染。
@@ -218,6 +230,8 @@ fun ExpandableShell(
     val heroAlpha = remember { Animatable(1f) }
     // 暴露给内容的只读进度 State（Animatable 本身不是 State，用 derivedStateOf 包一层）。
     val progressState = remember { derivedStateOf { progressAnim.value } }
+    // hero 透明度的只读 State：内容封面据此与 hero 互补（见 [LocalShellHeroAlpha]）。
+    val heroAlphaState = remember { derivedStateOf { heroAlpha.value } }
 
     // 外部受控进度：跟手时直接驱动壳几何（snap），不受内部动画干扰。
     // 关闭动画从当前进度续跑；打开动画仅在无外部进度时自动跑。
@@ -430,6 +444,7 @@ fun ExpandableShell(
                         CompositionLocalProvider(
                             LocalShellProgress provides progressState,
                             LocalShellSettled provides settled,
+                            LocalShellHeroAlpha provides heroAlphaState,
                         ) {
                             content()
                         }

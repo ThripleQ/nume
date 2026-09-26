@@ -48,6 +48,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -65,6 +66,7 @@ import coil.request.ImageRequest
 import com.thripleq.nume.core.repo.Track
 import com.thripleq.nume.core.repo.TrackCollection
 import com.thripleq.nume.ui.components.BigCoverVisual
+import com.thripleq.nume.ui.components.LocalShellHeroAlpha
 import com.thripleq.nume.ui.components.LocalShellProgress
 import com.thripleq.nume.ui.components.LocalShellSettled
 import com.thripleq.nume.ui.components.ShimmerImagePlaceholder
@@ -255,6 +257,8 @@ private fun TrackListSkeleton(
     onCoverReady: (() -> Unit)? = null,
 ) {
     val progress = LocalShellProgress.current
+    // 展开动画期间 hero 正顶着封面：骨架封面与 hero 互补，避免两层重影（见 LocalShellHeroAlpha）。
+    val heroAlpha = LocalShellHeroAlpha.current
     Column(
         Modifier
             .fillMaxSize()
@@ -268,6 +272,8 @@ private fun TrackListSkeleton(
                 else Modifier.padding(horizontal = 16.dp),
             )
             .aspectRatio(1f)
+            // 与 hero 互补：hero 顶着时透明，交接时随之淡入（draw 阶段读，不重组）。
+            .graphicsLayer { alpha = 1f - heroAlpha.value }
         if (coverUrl != null) {
             Box(
                 coverModifier
@@ -349,6 +355,8 @@ private fun TrackListBannerHeader(
 ) {
     val context = LocalContext.current.applicationContext
     val progress = LocalShellProgress.current
+    // 展开动画期间 hero 正顶着封面：本封面与 hero 互补，避免两层重影（见 LocalShellHeroAlpha）。
+    val heroAlpha = LocalShellHeroAlpha.current
     val meta = listOfNotNull(
         collectionMetaLine(collection).takeIf { it.isNotBlank() },
         collection.updateFrequency.takeIf { it.isNotBlank() },
@@ -374,7 +382,9 @@ private fun TrackListBannerHeader(
                         Modifier
                     },
                 )
-                .clip(NumeShape.Card),
+                .clip(NumeShape.Card)
+                // 与 hero 互补：hero 顶着时本封面透明，交接时随之淡入（draw 阶段读，不重组）。
+                .graphicsLayer { alpha = 1f - heroAlpha.value },
         ) {
             BigCoverVisual(
                 coverUrl = collection.coverUrl,

@@ -50,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -69,6 +70,7 @@ import com.thripleq.nume.core.repo.ProfileData
 import com.thripleq.nume.ui.components.BigCoverVisual
 import com.thripleq.nume.ui.components.CoverExpandShell
 import com.thripleq.nume.ui.components.HeroCoverSize
+import com.thripleq.nume.ui.components.LocalShellHeroAlpha
 import com.thripleq.nume.ui.components.ShimmerImagePlaceholder
 import com.thripleq.nume.ui.components.SkeletonBox
 import com.thripleq.nume.ui.components.SkeletonLine
@@ -589,6 +591,8 @@ private fun PlaylistGridPanel(
 ) {
     // LazyVerticalGrid 自带滚动，不再外包一层 verticalScroll + 全量 Column：
     // 歌单多时只组合可见格，避免每帧重排整棵树。
+    // 展开动画期间 hero 正顶着封面：banner 与 hero 互补，避免两层重影（见 LocalShellHeroAlpha）。
+    val heroAlpha = LocalShellHeroAlpha.current
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
         modifier = Modifier.fillMaxSize(),
@@ -601,7 +605,9 @@ private fun PlaylistGridPanel(
                 Modifier
                     .fillMaxWidth()
                     .aspectRatio(1f)
-                    .clip(NumeShape.Card),
+                    .clip(NumeShape.Card)
+                    // 与 hero 互补：hero 顶着时透明，交接时随之淡入（draw 阶段读，不重组）。
+                    .graphicsLayer { alpha = 1f - heroAlpha.value },
             ) {
                 BigCoverVisual(
                     coverUrl = coverUrl,
