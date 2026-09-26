@@ -2,6 +2,7 @@ package com.thripleq.nume.core.repo
 
 import android.util.Log
 import com.thripleq.nume.BuildConfig
+import com.thripleq.nume.core.db.CollectionCache
 import com.thripleq.nume.core.net.NetEaseGateway
 import com.thripleq.nume.core.net.NeteaseOp
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +60,7 @@ data class ProfileData(
 @Singleton
 class ProfileRepository @Inject constructor(
     private val gateway: NetEaseGateway,
+    private val collectionCache: CollectionCache,
 ) {
 
     /**
@@ -96,8 +98,8 @@ class ProfileRepository @Inject constructor(
     /** 已解析"喜欢"曲目缓存（uid → tracks）：Profile 页计数与列表页共用，避免重复全量拉取。 */
     private val likedCache = LruCache<String, List<Track>>(2)
 
-    /** 歌单/专辑壳缓存：重进列表页不重拉 JSON。 */
-    private val collectionCache = LruCache<String, TrackCollection>(32)
+    /** 歌单/专辑壳内存缓存：重进列表页不重拉 JSON。Room 为二级（离线）缓存。 */
+    private val collectionMemory = LruCache<String, TrackCollection>(32)
 
     /** Current account, or null when not logged in (code 301) / on error. */
     suspend fun account(): Account? = withContext(Dispatchers.IO) {
@@ -312,35 +314,56 @@ class ProfileRepository @Inject constructor(
             }
         }
 
-    /** A playlist's full shell (metadata + tracks). Playlist id is a chart id. 结果内存缓存。 */
+    /** 歌单完整壳（元数据 + 曲目），榜单 id 即歌单 id。网络成功写内存 + Room，失败回退离线副本。 */
     suspend fun playlistCollection(playlistId: String): TrackCollection? = withContext(Dispatchers.IO) {
         val key = "pl:$playlistId"
-        collectionCache[key]?.let { return@withContext it }
+        collectionMemory[key]?.let { return@withContext it }
+        val fresh = fetchPlaylistCollection(playlistId)
+        if (fresh != null) {
+            collectionMemory[key] = fresh
+            collectionCache.put(key, fresh)
+            return@withContext fresh
+        }
+        collectionCache.get(key)?.also { collectionMemory[key] = it }
+    }
+
+    /** 拉一个歌单的完整壳；请求/解析失败返回 null。 */
+    private suspend fun fetchPlaylistCollection(playlistId: String): TrackCollection? {
         val r = gateway.call(NeteaseOp.PLAYLIST_DETAIL, playlistId, "0")
-        if (r.err != 0 || r.code != 200) return@withContext null
-        try {
+        if (r.err != 0 || r.code != 200) return null
+        return try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
-            val playlist = root.optJSONObject("playlist") ?: return@withContext null
+            val playlist = root.optJSONObject("playlist") ?: return null
             val base = parsePlaylistObject(playlist)
             base.copy(tracks = completePlaylistTracks(gateway, playlist, base.tracks))
-                .also { collectionCache[key] = it }
         } catch (_: Exception) {
             null
         }
     }
 
-    /** A purchased album's shell (/weapi/v1/album/{id}). No play-count etc. 结果内存缓存。 */
+    /** 已购专辑完整壳（/weapi/v1/album/{id}，无播放量等）。网络成功写内存 + Room，失败回退离线副本。 */
     suspend fun albumCollection(albumId: String): TrackCollection? = withContext(Dispatchers.IO) {
         val key = "al:$albumId"
-        collectionCache[key]?.let { return@withContext it }
+        collectionMemory[key]?.let { return@withContext it }
+        val fresh = fetchAlbumCollection(albumId)
+        if (fresh != null) {
+            collectionMemory[key] = fresh
+            collectionCache.put(key, fresh)
+            return@withContext fresh
+        }
+        collectionCache.get(key)?.also { collectionMemory[key] = it }
+    }
+
+    /** 拉一个已购专辑的完整壳；请求/解析失败返回 null。 */
+    private suspend fun fetchAlbumCollection(albumId: String): TrackCollection? {
         val r = gateway.call(NeteaseOp.ALBUM_DETAIL, albumId)
         diag("albumCollection op=${NeteaseOp.ALBUM_DETAIL} id=$albumId code=${r.code} err=${r.err} body=${String(r.body, Charsets.UTF_8).take(300)}")
         // 同 songDetails：以 err+body 判定，code 仅作诊断
-        if (r.err != 0 || r.body.isEmpty()) return@withContext null
-        try {
+        if (r.err != 0 || r.body.isEmpty()) return null
+        return try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
             // 顶层无 album 对象, songs 直接在根; 元数据从首曲推断
-            parseAlbumObject(root).also { collectionCache[key] = it }
+            parseAlbumObject(root)
         } catch (_: Exception) {
             null
         }

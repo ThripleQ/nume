@@ -1,6 +1,9 @@
 package com.thripleq.nume.di
 
 import android.content.Context
+import androidx.room.Room
+import com.thripleq.nume.core.db.CollectionDao
+import com.thripleq.nume.core.db.NumeDatabase
 import com.thripleq.nume.core.net.NetEaseGateway
 import com.thripleq.nume.core.net.NumeNative
 import dagger.Module
@@ -28,6 +31,14 @@ object AppModule {
         )
         return NetEaseGateway()
     }
+
+    @Provides
+    @Singleton
+    fun provideDatabase(@ApplicationContext context: Context): NumeDatabase =
+        Room.databaseBuilder(context, NumeDatabase::class.java, NumeDatabase.NAME).build()
+
+    @Provides
+    fun provideCollectionDao(database: NumeDatabase): CollectionDao = database.collectionDao()
 
     private const val NETEASE_COOKIE_FILE = "netease_cookies.json"
 }

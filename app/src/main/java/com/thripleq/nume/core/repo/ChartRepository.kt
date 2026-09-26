@@ -1,5 +1,6 @@
 package com.thripleq.nume.core.repo
 
+import com.thripleq.nume.core.db.CollectionCache
 import com.thripleq.nume.core.net.NetEaseGateway
 import com.thripleq.nume.core.net.NeteaseOp
 import android.util.Log
@@ -23,9 +24,10 @@ data class Chart(
 @Singleton
 class ChartRepository @Inject constructor(
     private val gateway: NetEaseGateway,
+    private val collectionCache: CollectionCache,
 ) {
-    // 集合（榜单详情）内存缓存：列表页返回再进不重拉 JSON。
-    private val collectionCache = LruCache<String, TrackCollection>(16)
+    // 集合（榜单详情）内存缓存：列表页返回再进不重拉 JSON。Room 为二级（离线）缓存。
+    private val collectionMemory = LruCache<String, TrackCollection>(16)
 
     suspend fun charts(): List<Chart> = withContext(Dispatchers.IO) {
         val r = gateway.call(NeteaseOp.TOPLIST_DETAIL)
@@ -61,22 +63,34 @@ class ChartRepository @Inject constructor(
     /**
      * 一个榜单的完整壳（元数据 + 曲目）。匿名 /weapi/toplist/detail 里
      * per-chart 的 `tracks` 预览是空的；榜单 id 本身就是歌单 id，改从
-     * /api/v6/playlist/detail 拉完整集合。结果内存缓存，重进不重拉。
+     * /api/v6/playlist/detail 拉完整集合。网络成功写内存 + Room；网络失败
+     * 回退 Room 里的离线副本（断网仍可看打开过的榜单）。
      */
     suspend fun chartCollection(chartId: String): TrackCollection? = withContext(Dispatchers.IO) {
-        collectionCache[chartId]?.let { return@withContext it }
+        // 榜单 id 即歌单 id，与 ProfileRepository.playlistCollection 共用同一 cacheKey。
+        val key = "pl:$chartId"
+        collectionMemory[key]?.let { return@withContext it }
+        val fresh = fetchCollection(chartId)
+        if (fresh != null) {
+            collectionMemory[key] = fresh
+            collectionCache.put(key, fresh)
+            return@withContext fresh
+        }
+        collectionCache.get(key)?.also { collectionMemory[key] = it }
+    }
+
+    /** 拉一个榜单/歌单的完整集合；失败返回 null。 */
+    private suspend fun fetchCollection(chartId: String): TrackCollection? {
         val r = gateway.call(NeteaseOp.PLAYLIST_DETAIL, chartId, "0")
         if (r.err != 0) {
             Log.e("ChartRepository", "playlist detail failed: err=${r.err} code=${r.code}")
-            return@withContext null
+            return null
         }
-        try {
+        return try {
             val root = JSONObject(String(r.body, Charsets.UTF_8))
-            val playlist = root.optJSONObject("playlist") ?: return@withContext null
+            val playlist = root.optJSONObject("playlist") ?: return null
             val base = parsePlaylistObject(playlist)
-            val collection = base.copy(tracks = completePlaylistTracks(gateway, playlist, base.tracks))
-            collectionCache[chartId] = collection
-            collection
+            base.copy(tracks = completePlaylistTracks(gateway, playlist, base.tracks))
         } catch (_: Exception) {
             null
         }

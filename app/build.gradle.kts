@@ -116,6 +116,11 @@ dependencies {
     // shimmer placeholders (skeleton loading)
     implementation(libs.compose.shimmer)
 
+    // persistence — Room offline cache for collection metadata + tracks
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
+
     // frame-jank telemetry (JankStats; logs in debug, hook for prod reporting)
     implementation(libs.androidx.metrics.performance)
 
