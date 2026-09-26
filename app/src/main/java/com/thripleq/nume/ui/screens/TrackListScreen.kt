@@ -67,7 +67,6 @@ import coil.request.ImageRequest
 import com.thripleq.nume.core.repo.Track
 import com.thripleq.nume.core.repo.TrackCollection
 import com.thripleq.nume.ui.components.BigCoverVisual
-import com.thripleq.nume.ui.components.LocalShellClosing
 import com.thripleq.nume.ui.components.LocalShellHeroAlpha
 import com.thripleq.nume.ui.components.LocalShellProgress
 import com.thripleq.nume.ui.components.LocalShellSettled
@@ -129,17 +128,16 @@ fun TrackListScreen(
     val actionsOffscreen by remember { derivedStateOf { actionsTop < actionsThresholdPx } }
     LaunchedEffect(actionsOffscreen) { onActionsOffscreen(actionsOffscreen) }
 
-    // 加载与壳展开**并行**：动画一开始就发起请求，数据在后台拉取——动画结束时通常已就绪，
-    // 不再出现「动画结束 → 骨架再等一个网络往返」的割裂感（那会让加载显得慢）。渲染仅在壳
-    // 展开约 35% 后才允许切到列表：躲开起帧争抢，且 260ms 的 Crossfade 与剩余展开动画同步
-    // 收尾，列表随壳渐次露出。非壳环境（shellSettled 恒 true / progress 恒 1）立即就绪。
+    // 加载与壳展开**并行**：动画一开始就发起请求，数据在后台拉取。但**切到列表**（LazyColumn +
+    // 图片首次组合）推迟到壳展开动画**完全结束**之后：数据/封面一旦被缓存，重开时若允许在中途
+    // 切换，列表会在动画期间首次组合 → 稳定掉帧（冷启动时数据未到、只画骨架反而顺）。
+    // 非壳环境（shellSettled 恒 true / progress 恒 1）立即就绪。
     val shellSettled = LocalShellSettled.current
-    val shellProgress = LocalShellProgress.current
     var contentReady by remember { mutableStateOf(false) }
     LaunchedEffect(source, id) {
         vm.load(src, id, title)
         if (!shellSettled.value) {
-            snapshotFlow { shellSettled.value || shellProgress.value >= 0.35f }.first { it }
+            snapshotFlow { shellSettled.value }.first { it }
         }
         contentReady = true
     }
@@ -202,17 +200,9 @@ fun TrackListScreen(
         // 内容「浮现度」：与骨架淡出严格互补（不重组，供 draw 阶段读）。
         // 骨架下的 meta/按钮直接满不透明出现会像"闪现"，用它做出场淡入。
         val contentReveal = remember(skeletonAlpha) { derivedStateOf { 1f - skeletonAlpha.value } }
-        // 收起退场：壳开始缩回时列表行淡出，避免被裁剪窗口硬"擦"掉（非壳环境恒 1）。
-        val shellClosing = LocalShellClosing.current
-        val exitAlpha = animateFloatAsState(
-            targetValue = if (shellClosing.value) 0f else 1f,
-            animationSpec = tween(200),
-            label = "trackListExitAlpha",
-        )
-        // 列表行的最终透明度 = 出场浮现 × 退场淡出（draw 阶段读，不重组）。
-        val rowsAlpha = remember(contentReveal, exitAlpha) {
-            derivedStateOf { contentReveal.value * exitAlpha.value }
-        }
+        // 收起退场：整块内容随壳收缩进度淡出，由 shell 统一处理（见 ExpandableShell），
+        // 这里不再单开一个 200ms 退场时钟——列表只做出场浮现（draw 阶段读，不重组）。
+        val rowsAlpha = contentReveal
         Box(Modifier.fillMaxSize()) {
             when (display) {
                 is TrackCollection -> {

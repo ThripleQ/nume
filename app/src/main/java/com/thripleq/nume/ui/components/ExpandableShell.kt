@@ -417,9 +417,10 @@ fun ExpandableShell(
         ) {
             Column(
                 Modifier
-                    // 壳顶已长到屏幕顶：内容整体下移「状态栏高度 × 展开进度」（layout 阶段读，
-                    // 不重组），全屏时正好让开状态栏，p=0 时仍与起点胶囊内部布局对齐。
-                    .shellTopInset(progressState, fullTopPx)
+                    // contentFromStart 路径内容随壳生长，仍按进度下移以对齐起点胶囊内部。
+                    // 固定排版路径**不再逐帧下移**：内容屏幕位置恒定（见下方 content Box 的双向
+                    // 抵消 offset），列表只做淡入淡出、不做平移。
+                    .then(if (contentFromStart) Modifier.shellTopInset(progressState, fullTopPx) else Modifier)
                     .fillMaxSize()
                     .padding(vertical = if (contentFromStart) 0.dp else 4.dp),
             ) {
@@ -451,12 +452,30 @@ fun ExpandableShell(
                     contentModifier
                         .padding(bottom = if (contentFromStart) 0.dp else recessedBottom)
                         .offset {
-                            // 抵消壳的水平平移，使内容在屏幕上静止、只由壳裁剪露出；用 offset 而非
-                            // graphicsLayer，避免内容子树再套一层 offscreen（layout 期读取，不重组）。
-                            val x =
-                                if (contentFromStart) 0 else -leftAt(progressAnim.value).roundToInt()
-                            IntOffset(x, 0)
-                        },
+                            // 固定排版路径：**双向**抵消壳的平移（x 与 y 都抵消），使内容在屏幕上
+                            // 完全静止——展开时列表不再随壳上移，只由壳的裁剪窗口逐步露出、靠 alpha
+                            // 淡入淡出。用 offset 而非 graphicsLayer，避免内容子树再套一层 offscreen
+                            // （layout 期读取，不重组）。contentFromStart 路径内容随壳生长，不抵消。
+                            if (contentFromStart) {
+                                IntOffset(0, 0)
+                            } else {
+                                val t = progressAnim.value
+                                IntOffset(
+                                    -leftAt(t).roundToInt(),
+                                    (fullTopPx - topAt(t)).roundToInt(),
+                                )
+                            }
+                        }
+                        // 收起：整块内容随壳收缩进度淡出（不做位移），避免被收缩的裁剪窗口
+                        // 「推/擦」出去、看着像列表在滑动。只在**收起期间**挂这一层，展开期不挂，
+                        // 免得给内容再套一层 offscreen。
+                        .then(
+                            if (closing && !contentFromStart) {
+                                Modifier.graphicsLayer { alpha = progressAnim.value }
+                            } else {
+                                Modifier
+                            },
+                        ),
                     content = {
                         CompositionLocalProvider(
                             LocalShellProgress provides progressState,
