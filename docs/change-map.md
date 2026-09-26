@@ -58,6 +58,19 @@
 | 谁注入了谁、换个实现 | `di/AppModule.kt` |
 | 应用启动时做的初始化 | `NumeApplication.kt`、`MainActivity.kt` |
 
+## 5. 性能 / 诊断 / 构建
+
+| 我想… | 去改 |
+|---|---|
+| 调 release 优化（R8 / 资源压缩） | `app/build.gradle.kts` 的 `buildTypes.release` |
+| JNI 被 R8 裁剪/改名导致运行期崩 | `app/proguard-rules.pro` |
+| 看 Compose 类稳定性 / composable 可跳过性 | 构建后 `app/build/compose-reports/`、`compose-metrics/`（开关在 `app/build.gradle.kts` 的 `composeCompiler{}`） |
+| 线上掉帧统计 / 冷启动 splash / 启动初始化 | `MainActivity.kt`（JankStats、installSplashScreen） |
+| StrictMode / 全局初始化 / 图片加载 | `NumeApplication.kt` |
+| HTTP 请求日志（仅 debug） | `core/net/NumeTransport.kt`（`BuildConfig.DEBUG` 下 BASIC 级） |
+| 生成/调整 Baseline Profile | `baselineprofile/`（`BaselineProfileGenerator.kt`）、`./gradlew :app:generateReleaseBaselineProfile` |
+| 构建提速（配置/构建缓存） | `gradle.properties` |
+
 ---
 
 ## 兜底：不确定该动哪时

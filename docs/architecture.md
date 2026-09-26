@@ -105,9 +105,22 @@ libnetease 以 `NE_USE_CURL=OFF` 编译，**不依赖 curl**。所有请求照�
 - Room(后续)：元数据（歌单、歌单曲目、歌词缓存、下载记录）。
 - Media3 `SimpleCache` 自带哈希索引 + `StandaloneDatabaseProvider` 落库，独立于应用 UI 数据。
 
-## 八、测试 / 构建
+## 八、构建 / 性能 / 诊断
 
-- 本地：`./gradlew :app:assembleRelease`（JAVA_HOME 指向 Android Studio 的 JBR）。
+- **变体**：`assembleDebug`（开发用，无 R8/AOT）· `assembleRelease`（发布用，开 R8 +
+  `isShrinkResources`）。
+- **性能 A/B 一律用 release**：debug 的 Compose（无 R8/AOT、debuggable）UI 线程约慢 1.5–1.6×，
+  足以让最简列表在 90Hz（预算 11.1ms）掉帧。真机实测 release 90th≈12–14ms / janky≈1%，
+  debug 18–22ms / 3–9%。
+- **R8 keep 规则**：`app/proguard-rules.pro` 保住 JNI 按「名字」引用的类/成员
+  （`NumeNative` / `NumeTransport` / `NumeTransportOut` / `ApiResult`），否则原生传输运行期崩。
+- **Baseline Profile**：`:baselineprofile` 模块（官方 `androidx.baselineprofile` + macrobenchmark），
+  `./gradlew :app:generateReleaseBaselineProfile` 产出安装期 AOT profile；部分 ROM（如 vivo）的
+  安装拦截会挡住 UTP 自动安装，需换设备/模拟器生成。
+- **诊断工具**：Compose 编译器报告（`app/build/compose-reports|metrics`，查稳定性/可跳过性）、
+  JankStats（`MainActivity`，按生命周期启停）、LeakCanary / OkHttp 日志 / StrictMode（仅 debug）、
+  `Theme.Nume.Starting` 冷启动 splash。
+- **构建提速**：`gradle.properties` 开 configuration cache + build cache。
 - CI：GitHub Actions 在 push 到 `main`/`beta` 时构建并上传 debug APK。
 
 ## 九、路线图 / 当前状态

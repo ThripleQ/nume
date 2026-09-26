@@ -52,10 +52,30 @@ rather than hand-roll Netune's segment cache — see the architecture doc for th
 ## Building
 
 ```bash
-./gradlew assembleDebug
+./gradlew assembleDebug     # dev build (no R8/AOT — expect jank; see note)
+./gradlew assembleRelease    # optimized (R8 + resource shrinking)
 ```
 
+> **Benchmark against release, never debug.** Debug Compose (no R8/AOT, `debuggable`) runs the UI
+> thread ~1.5–1.6× slower — enough to drop frames on a trivial list at 90 Hz. Measured on device:
+> release ≈ 12–14 ms 90th / ~1% janky vs debug ≈ 18–22 ms / 3–9%.
+>
+> Release APKs are unsigned; to install locally, sign the output with the debug keystore
+> (`apksigner sign --ks ~/.android/debug.keystore …`).
+
 CI (GitHub Actions) builds `assembleDebug` on every push to `main`/`beta` and uploads the APK.
+
+### Performance & diagnostics
+
+- **Compose compiler reports** → `app/build/compose-reports/` + `app/build/compose-metrics/`
+  (class stability / composable skippability).
+- **JankStats** — starts/stops with the activity lifecycle; logs janky frames in debug and is the
+  hook for production frame-jank reporting.
+- **LeakCanary / OkHttp logging / StrictMode** — debug only.
+- **Baseline Profile** — `./gradlew :app:generateReleaseBaselineProfile` (macrobenchmark-driven,
+  see the `:baselineprofile` module). Some ROMs (e.g. vivo) block UTP installs behind a
+  confirmation dialog, so generation needs a friendlier device/emulator.
+- **Gradle configuration/build cache** enabled in `gradle.properties`.
 
 ## Roadmap
 
