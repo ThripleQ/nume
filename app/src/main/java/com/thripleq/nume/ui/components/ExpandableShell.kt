@@ -2,7 +2,6 @@ package com.thripleq.nume.ui.components
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -53,12 +52,12 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
+import com.thripleq.nume.ui.theme.Motion
+import kotlin.math.min
 import kotlin.math.roundToInt
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 
-/** 壳展开时「壳以外区域」背景退暗的最大不透明度（随竖向进度渐深）。 */
+/** 壳展开时「壳以外区域」背景退暗的最大不透明度（随展开进度渐深）。 */
 private const val SHELL_SCRIM_ALPHA = 0.32f
 
 /**
@@ -66,6 +65,9 @@ private const val SHELL_SCRIM_ALPHA = 0.32f
  *
  * 刻意暴露 [State] 而非裸 Float：内容方在读 `value` 时可自行选择在**布局/绘制阶段**读取，
  * 从而避免动画每帧触发整棵内容树重组。
+ *
+ * 注意：本进度是**单一时间基**（见 [ExpandableShell]），宽高/圆角/hero/scrim 全由它派生，
+ * 因此这里读到的 t 与壳的实际几何严格同步。
  */
 val LocalShellProgress: androidx.compose.runtime.ProvidableCompositionLocal<State<Float>> =
     staticCompositionLocalOf { mutableStateOf(1f) }
@@ -93,8 +95,8 @@ fun Modifier.shellInset(progress: State<Float>, maxInset: Dp): Modifier =
     }
 
 /**
- * 顶部内缩随壳展开进度增长：语义等价于 `padding(top = inset * progress)`，
- * 但在 **layout 阶段**读取 [progress]——宿主 composable 不会被每帧重组。
+ * 顶部内缩随壳展开进度增长：语义等价于 `padding(top = inset * progress)`，但在 **layout 阶段**
+ * 读取 [progress]——宿主 composable 不会被每帧重组。
  *
  * 壳顶一路长到屏幕顶（0）后，用它在全屏时把内容推回状态栏下方；p=0 时内缩为 0，
  * 内容仍与起点胶囊内部布局对齐。
@@ -113,6 +115,23 @@ fun Modifier.shellTopInset(progress: State<Float>, insetPx: Float): Modifier =
  * 从一个胶囊的 [fromRect]（窗口坐标 Rect）平滑伸展到全屏，再缩回原位。
  * 用于「点击小胶囊 → 展开成面板」的过渡，收起动画保证最后一帧精确复位。
  *
+ * ## 单一时间基（为什么不再横竖分轴）
+ * 整只壳只有**一个** `progressAnim: 0..1`，宽、高、平移、圆角、hero、scrim 全部由这同一个
+ * `t` 派生。之前用 `horizontal` / `vertical` 两条独立 tween（展开 320/380、收起 280/340），
+ * 两条曲线在不同时刻收尾 ⇒ 中间帧宽高比失真，看着「不像一个整体在动」，而且圆角挂在竖轴上、
+ * 与宽度脱节，观感忽方忽圆。同一条时钟下宽高比单调插值，形状不再中途变形。
+ *
+ * 层次感（谁先谁后）不再靠「不同时长」实现——那正是失真来源——而靠**同轴上的不同映射**：
+ * 圆角前段恒定、后段收敛（[Motion.cornerTaper]）；scrim 随 t 渐深；hero 在 [Motion.HeroHandoffAt]
+ * 才交接给内容里的高清封面。
+ *
+ * ## 与父级内容的完美衔接（硬契约）
+ * - **t=0**：壳矩形 ≡ [fromRect]、圆角 ≡ 父级卡片真圆角（[Motion.CornerHold] 前段不收敛）、
+ *   hero 尺寸 ≡ 卡片封面 ⇒ 首帧与父级逐像素吻合，看不出发生了切换。
+ * - **t=1**：内容与终态排版重合（固定排版 + 壳裁剪，见下）。
+ * - 圆角另加 **短边钳制**（`min(cornerPx, 短边×0.5)`）：壳还很小而圆角相对很大时，
+ *   钳制保证它不会长成「药丸」，与任何尺寸的父级卡片都衔接得住。
+ *
  * ## 对齐契约（务必遵守，否则收起尾帧会跳位）
  * 1. [header] 必须与「起点胶囊的头部」是**同一个 composable**（颜色/文字/图标相对位置天然一致）。
  *    胶囊未展开时的头部由调用方渲染，展开壳顶部的标题栏由本组件渲染同一份 [header]。
@@ -120,29 +139,30 @@ fun Modifier.shellTopInset(progress: State<Float>, insetPx: Float): Modifier =
  *    胶囊自身的 padding 不能加在 Card/bounds modifier 上，要放内部，否则 bounds 含 padding、终点偏。
  * 3. 壳内部布局必须与胶囊内部布局**同构**（同样的垂直 padding），否则内容相对壳顶的位置对不上。
  *
- * ## 打开/收起
- * - 打开：竖向、横向、内容淡入三轴并发展开。
- * - 收起：内容淡出 → 横向收窄 → 竖向缩回；全部完成后等两帧（[withFrameNanos]）让
- *   「完全复位」的画面真正绘制落地再调 [onDismiss]，避免最后一帧被跳过。
+ * ## 打开 / 收起
+ * - 打开：单一 t 按 [Motion.shellOpen] 走到 1（果断起步 + 长减速尾）。
+ * - 收起：t 按 [Motion.shellClose] 回到 0（末段减速停稳，不硬切）；结束后等两帧
+ *   （[withFrameNanos]）让「完全复位」的画面真正绘制落地再调 [onDismiss]，避免最后一帧被跳过。
  *
  * @param fromRect  起点胶囊的窗口坐标 Rect；null 时用兜底几何（左/顶各 16dp、宽 328dp）
  * @param fullTopPx 内容需要避开的顶部高度（px），通常 = 状态栏高度。壳本身会一直长到屏幕顶
  *                  （含状态栏那段，不再另设填充块），内容在展开期间按此值下移
- * @param shapeCornerDp  壳圆角（px 动画不插值圆角，保持胶囊观感）
+ * @param shapeCornerDp  壳圆角（动画期按实际短边钳制并在后段收敛，见上「完美衔接」）
  * @param containerColor 壳背景色（应与胶囊 Card 颜色一致）
  * @param recessedBottom 内容区（窟窿）底部让位量：壳本身延伸到屏幕底，
  *                       内容区底部留出此高度露出底下导航岛，与岛同色融合
  * @param progress 外部受控展开进度（0..1）：非 null 时壳几何由它插值驱动（跟手），
- *                 自动开启动画被跳过；null 时用内部动画。关闭动画从当前进度续跑。
+ *                 自动开启动画被跳过；null 时用内部动画。关闭动画从当前进度续跑，
+ *                 且续跑时长按剩余距离等比缩短（[Motion.shellResume]）。
  * @param contentFromStart 内容从头可见、无独立 header：内容不淡入（alpha 恒 1），
  *                 让内容自身的第一项（如全宽封面）在 p=0 时恰好等于起点卡片、随壳生长；
  *                 header 槽不渲染，[recessedBottom] 也忽略（改由内容自行留底部空间）。
  *                 用于「大封面折进列表」——封面是列表第一项、随滚动移出。
  * @param heroTargetRect 内容首项（封面）的**窗口坐标**终态矩形（[State]，只在 layout/draw 阶段读取，
  *                 不订阅重组）。提供且 [contentFromStart] 为 false 时，在壳内叠加一张 hero 封面：
- *                 几何从起点胶囊矩形插值到该矩形，透明度与内容互补（内容淡入则 hero 淡出）。用于
- *                 「内容固定终态排版 + 壳裁剪」路径下恢复首尾与父级卡片的无缝对齐——p=0 时 hero
- *                 恰好等于卡片，p=1 时与内容里的 banner 封面重合。
+ *                 几何从起点胶囊矩形插值到该矩形，透明度与内容互补。用于「内容固定终态排版 +
+ *                 壳裁剪」路径下恢复首尾与父级卡片的无缝对齐——p=0 时 hero 恰好等于卡片，
+ *                 p=1 时与内容里的 banner 封面重合。
  * @param heroReady     高清封面是否已绘制出来（[State]，只在 layout/draw 阶段读取）。为 true 时 hero
  *                      原地渐变淡出、交接给内容里的高清封面；为 false（数据/图片未到）时 hero 一直顶着。
  * @param heroContent   hero 覆盖层内容（通常与起点卡片封面同源）。null 则不绘制 hero。
@@ -191,13 +211,13 @@ fun ExpandableShell(
     val fullHeightPx = viewHeight.toFloat()
 
     var closing by remember { mutableStateOf(false) }
-    val vertical = remember { Animatable(0f) }
-    val horizontal = remember { Animatable(0f) }
+    // ── 单一时间基：整只壳只有这一个进度时钟 ──
+    // 宽 / 高 / 平移 / 圆角 / hero / scrim 一律由它派生，不再各跑各的 tween。
+    val progressAnim = remember { Animatable(0f) }
     // Hero 透明度：1 = 低清 hero 顶着，0 = 已交接给高清封面。
     val heroAlpha = remember { Animatable(1f) }
     // 暴露给内容的只读进度 State（Animatable 本身不是 State，用 derivedStateOf 包一层）。
-    val horizontalState = remember { derivedStateOf { horizontal.value } }
-    val verticalState = remember { derivedStateOf { vertical.value } }
+    val progressState = remember { derivedStateOf { progressAnim.value } }
 
     // 外部受控进度：跟手时直接驱动壳几何（snap），不受内部动画干扰。
     // 关闭动画从当前进度续跑；打开动画仅在无外部进度时自动跑。
@@ -208,46 +228,40 @@ fun ExpandableShell(
     LaunchedEffect(progress) {
         if (progress != null) {
             hasFollowed = true
-            vertical.snapTo(progress)
-            horizontal.snapTo(progress)
+            progressAnim.snapTo(progress)
             settled.value = true
         } else if (hasFollowed) {
             // 从跟手态定格（progress→null）：从当前进度续跑打开动画到全屏。
-            // 续跑比点击打开快（手已有动能），但同族节奏：v300/h260。
-            if (!closing && (vertical.value < 1f || horizontal.value < 1f)) {
-                coroutineScope {
-                    launch { vertical.animateTo(1f, tween(300, easing = FastOutSlowInEasing)) }
-                    launch { horizontal.animateTo(1f, tween(260, easing = FastOutSlowInEasing)) }
-                }
+            // 时长按剩余距离等比给（Motion.shellResume），不再固定 300ms——
+            // 快拉满还跑完整时长显得拖沓，刚开始跑同样时长又显得 rushed。
+            if (!closing && progressAnim.value < 1f) {
+                progressAnim.animateTo(1f, Motion.shellResume(progressAnim.value))
             }
             settled.value = true
         }
     }
 
-    // 打开：仅无外部进度时三轴并发展开（点击胶囊进入全屏面板的默认动画）。
+    // 打开：仅无外部进度时自动跑（单一时钟，宽高天然同步）。
     if (!followProgress) {
         LaunchedEffect(Unit) {
-            coroutineScope {
-                launch { vertical.animateTo(1f, tween(380, easing = FastOutSlowInEasing)) }
-                launch { horizontal.animateTo(1f, tween(320, easing = FastOutSlowInEasing)) }
-            }
+            progressAnim.animateTo(1f, Motion.shellOpen())
             settled.value = true
         }
     }
 
     // Hero 交接：高清封面就绪、且壳已基本展开后，hero 原地渐变淡出（数据没到就一直顶着，
-    // 不查“加载状态”，只看封面是否已绘制出来）。关闭时 hero 快速渐显顶回（120ms），
+    // 不查“加载状态”，只看封面是否已绘制出来）。关闭时 hero 快速渐显顶回，
     // 尾帧照样精确缩回卡片；snapTo 会闪（高清已交接后 hero 瞬间叠现在内容上）。
     // 等壳展开再淡出很关键：否则高清封面若本来就绪，hero 会在展开初期就消失，露出固定排版的
     // 裁切内容（看起来像没优化）。
     val ready = heroReady?.value == true
     LaunchedEffect(ready, closing) {
         when {
-            closing -> heroAlpha.animateTo(1f, tween(120, easing = LinearEasing))
+            closing -> heroAlpha.animateTo(1f, tween(Motion.HeroReturnMs, easing = LinearEasing))
             !ready -> Unit
             else -> {
-                snapshotFlow { horizontal.value }.first { it >= 0.98f }
-                heroAlpha.animateTo(0f, tween(220))
+                snapshotFlow { progressAnim.value }.first { it >= Motion.HeroHandoffAt }
+                heroAlpha.animateTo(0f, tween(Motion.HeroFadeMs, easing = Motion.EmphasizedDecelerate))
             }
         }
     }
@@ -258,14 +272,11 @@ fun ExpandableShell(
     }
     LaunchedEffect(closing) {
         if (closing) {
-            // 关闭：横竖轴并发展开。v340/h280 —— 与打开(380/320)同比例提速，
-            // 对称收尾感；旧值 h240 比打开快 25%，横向收窄显得突兀。
-            coroutineScope {
-                launch { horizontal.animateTo(0f, tween(280, easing = FastOutSlowInEasing)) }
-                launch { vertical.animateTo(0f, tween(340, easing = FastOutSlowInEasing)) }
-            }
+            // 收起：同一条时钟回 0，用 Emphasized（末段减速停稳）。
+            // 之前横竖分别 280/340 且收尾用减速不足的曲线，末段像「撞」回卡片。
+            progressAnim.animateTo(0f, Motion.shellClose())
             // animateTo 返回时值已到位，但该值的画面还要等重组+绘制才落地；
-            // 立即 onDismiss 会把最后一帧跳过，壳停在 vertical≈0 处（偏上）。
+            // 立即 onDismiss 会把最后一帧跳过，壳停在 progress≈0 处（偏上）。
             // 等两帧让「完全复位」的画面真正画出来再移除覆盖层。
             withFrameNanos { }
             withFrameNanos { }
@@ -275,10 +286,35 @@ fun ExpandableShell(
 
     BackHandler { startClose() }
 
-    // 注意：动画值（horizontal / vertical / heroAlpha）一律不在组合阶段读取，
-    // 只在 layout / draw 的 lambda 里读——否则每帧都会重组整个 ExpandableShell
-    // （含内容子树：列表/网格），这是胶囊壳展开卡顿的主因。
+    // 注意：动画值（progressAnim / heroAlpha）一律不在组合阶段读取，只在 layout / draw 的
+    // lambda 里读——否则每帧都会重组整个 ExpandableShell（含内容子树：列表/网格），
+    // 这是胶囊壳展开卡顿的主因。
     // 启动动画的 LaunchedEffect 不依赖这些值，读值下沉不影响动画本身。
+
+    // 派生映射（纯函数，在 layout/draw 阶段按当前 t 求值，零分配、零重组）。
+    val cornerPx = with(density) { shapeCornerDp.toPx() }
+
+    /** 当前 t 下的壳宽度（px）。 */
+    fun widthAt(t: Float) = lerp(capsuleWidthPx, fullWidthPx, t)
+    /** 当前 t 下的壳高度（px）。 */
+    fun heightAt(t: Float) = lerp(capsuleHeightPx, fullHeightPx, t)
+    /** 当前 t 下的壳左边界（px）。 */
+    fun leftAt(t: Float) = lerp(capsuleLeft, fullLeft, t)
+    /** 当前 t 下的壳顶边界（px）。 */
+    fun topAt(t: Float) = lerp(capsuleTop, fullTop, t)
+    /**
+     * 当前 t 下的圆角（px）。
+     *
+     * 两层保护：
+     * 1. **[Motion.cornerTaper] 前段恒定** —— t ≤ CornerHold 期间保持父级卡片的真圆角，
+     *    保证 p=0 与父级逐像素吻合，中段也不会提前"变形"；越过该点后 smoothstep 收敛。
+     * 2. **短边钳制** —— 半径永不超过当前短边一半，任何尺寸的起点卡片都不会被画成药丸。
+     */
+    fun cornerAt(t: Float): Float {
+        val tapered = cornerPx * Motion.cornerTaper(t)
+        val maxSafe = min(widthAt(t), heightAt(t)) * 0.5f
+        return min(tapered, maxSafe)
+    }
 
     // 占位层：盖住底下页面、拦截触摸。
     Box(
@@ -286,7 +322,7 @@ fun ExpandableShell(
             .fillMaxSize()
             .onSizeChanged { viewWidth = it.width; viewHeight = it.height },
     ) {
-        // 背景 scrim：随竖向进度渐深（draw 阶段读值，不重组）——胶囊壳「升起」的层次来源，
+        // 背景 scrim：随展开进度渐深（draw 阶段读值，不重组）——胶囊壳「升起」的层次来源，
         // 底下页面退暗、壳浮在前，展开即建立 modal 焦点。
         // 必须是**独立一层**：若把 alpha 加在整个占位层上，壳与内容会被一起淡化（展开后的
         // 面板变半透明），还会给整屏内容套一层 offscreen、滚动时每帧重录。它只盖住「壳以外」
@@ -294,7 +330,7 @@ fun ExpandableShell(
         Box(
             Modifier
                 .fillMaxSize()
-                .graphicsLayer { alpha = SHELL_SCRIM_ALPHA * vertical.value }
+                .graphicsLayer { alpha = SHELL_SCRIM_ALPHA * progressAnim.value }
                 .background(Color.Black),
         )
         // 触摸拦截层（在壳之下、底下页面之上）：吃掉所有落在壳外的指针事件。
@@ -311,41 +347,34 @@ fun ExpandableShell(
                     }
                 },
         )
-        // 壳：位置/宽高全由插值驱动（显式宽高 + layout 阶段平移）。
-        // 壳顶越过状态栏一直长到屏幕顶（0），状态栏那段就是壳本身；底到屏底，底角直角
-        // （只顶圆角），底部让位由内容区（窟窿）padding 实现。
-        val cornerPx = with(density) { shapeCornerDp.toPx() }
+        // 壳：位置/宽高全由**同一个 t** 插值驱动（显式宽高 + layout 阶段平移）。
+        // 壳顶越过状态栏一直长到屏幕顶（0），状态栏那段就是壳本身；底到屏底。
         Box(
             modifier = Modifier
                 // 壳尺寸随动画每帧变化：把 animatable 读取下沉到 layout 阶段，
                 // 于是只触发重排（不重组）——内容子树的组合被跳过。
                 .layout { measurable, _ ->
-                    val w = lerp(capsuleWidthPx, fullWidthPx, horizontal.value)
-                        .roundToInt().coerceAtLeast(0)
-                    val h = lerp(capsuleHeightPx, fullHeightPx, vertical.value)
-                        .roundToInt().coerceAtLeast(0)
+                    val t = progressAnim.value
+                    val w = widthAt(t).roundToInt().coerceAtLeast(0)
+                    val h = heightAt(t).roundToInt().coerceAtLeast(0)
                     val placeable = measurable.measure(Constraints.fixed(w, h))
                     layout(w, h) { placeable.place(0, 0) }
                 }
                 // 平移同样在 layout 阶段读取；用 offset（只改放置、不新建图层）而非 graphicsLayer，
                 // 避免给整屏壳再套一层 offscreen。
                 .offset {
-                    IntOffset(
-                        lerp(capsuleLeft, fullLeft, horizontal.value).roundToInt(),
-                        lerp(capsuleTop, fullTop, vertical.value).roundToInt(),
-                    )
+                    val t = progressAnim.value
+                    IntOffset(leftAt(t).roundToInt(), topAt(t).roundToInt())
                 }
                 // 裁剪/投影只在动画期间需要：稳态下壳铺满全屏，圆角与投影都不可见，
                 // 保留会给整屏壳套一层 RenderNode/offscreen，让滚动时整个列表每帧重录
                 // display list——这是列表卡顿的主因。
-                // 四角圆角随展开收敛到 0：壳还小的时候四角与起点卡片一致（p=0 时完全重合），
-                // 展开到底圆角归零、铺满全屏（顶贴屏幕顶、底贴屏底，圆角不再可见）。在 draw
-                // 阶段读 progress，不触发重组；仅动画期间保留裁剪/投影。
+                // 圆角走 [cornerAt]：前段保持父级真圆角 + 短边钳制，后段 smoothstep 收敛，
+                // 既守住与父级的衔接，又消除末段"啪"地变方。
                 .then(
                     if (!settled.value || closing) {
                         Modifier.graphicsLayer {
-                            val r = (cornerPx * (1f - vertical.value)).coerceAtLeast(0f)
-                            shape = RoundedCornerShape(r.toDp())
+                            shape = RoundedCornerShape(cornerAt(progressAnim.value).toDp())
                             clip = true
                             shadowElevation = 1.dp.toPx()
                         }
@@ -359,7 +388,7 @@ fun ExpandableShell(
                 Modifier
                     // 壳顶已长到屏幕顶：内容整体下移「状态栏高度 × 展开进度」（layout 阶段读，
                     // 不重组），全屏时正好让开状态栏，p=0 时仍与起点胶囊内部布局对齐。
-                    .shellTopInset(verticalState, fullTopPx)
+                    .shellTopInset(progressState, fullTopPx)
                     .fillMaxSize()
                     .padding(vertical = if (contentFromStart) 0.dp else 4.dp),
             ) {
@@ -376,7 +405,7 @@ fun ExpandableShell(
                 // - 否则：按终态尺寸（全宽 × 屏高-header-内边距）固定排版一次。内容约束在动画
                 //   期间不变，Compose 会跳过 measure（OuterMeasurablePlaceable 同约束缓存），
                 //   于是列表/网格每帧零重排；水平再用 -shellLeft 抵消壳平移，使内容在屏幕上
-                //   静止，只由壳的裁剪窗口逐步露出。alpha 仍在 draw 阶段读。
+                //   静止，只由壳的裁剪窗口逐步露出。
                 val contentModifier = if (contentFromStart) {
                     Modifier.weight(1f).fillMaxWidth()
                 } else {
@@ -393,13 +422,13 @@ fun ExpandableShell(
                         .offset {
                             // 抵消壳的水平平移，使内容在屏幕上静止、只由壳裁剪露出；用 offset 而非
                             // graphicsLayer，避免内容子树再套一层 offscreen（layout 期读取，不重组）。
-                            val x = if (contentFromStart) 0
-                                else -lerp(capsuleLeft, fullLeft, horizontal.value).roundToInt()
+                            val x =
+                                if (contentFromStart) 0 else -leftAt(progressAnim.value).roundToInt()
                             IntOffset(x, 0)
                         },
                     content = {
                         CompositionLocalProvider(
-                            LocalShellProgress provides horizontalState,
+                            LocalShellProgress provides progressState,
                             LocalShellSettled provides settled,
                         ) {
                             content()
@@ -411,18 +440,17 @@ fun ExpandableShell(
             // Hero 封面：固定排版路径下恢复首尾对齐。
             // 起点 = 胶囊矩形（壳局部坐标 (0,0,capsuleW,capsuleH)），终点 = heroTargetRect 换算到
             // **壳局部坐标**（窗口矩形 - 壳绘制原点；壳原点随动画移动，相减后终点恒定）。
-            // 几何在 layout 阶段读动画值，不触发重组；透明度与内容互补（内容淡入则 hero 淡出）。
+            // 几何在 layout 阶段读同一个 t，不触发重组；透明度与内容互补。
             if (!contentFromStart && heroContent != null) {
                 Box(
                     Modifier
                         .layout { measurable, _ ->
+                            val t = progressAnim.value
                             val target = heroTargetRect?.value
                             val tW = target?.width ?: capsuleWidthPx
                             val tH = target?.height ?: capsuleHeightPx
-                            val w = lerp(capsuleWidthPx, tW, horizontal.value)
-                                .roundToInt().coerceAtLeast(0)
-                            val h = lerp(capsuleHeightPx, tH, vertical.value)
-                                .roundToInt().coerceAtLeast(0)
+                            val w = lerp(capsuleWidthPx, tW, t).roundToInt().coerceAtLeast(0)
+                            val h = lerp(capsuleHeightPx, tH, t).roundToInt().coerceAtLeast(0)
                             val placeable = measurable.measure(Constraints.fixed(w, h))
                             layout(w, h) { placeable.place(0, 0) }
                         }
@@ -430,14 +458,13 @@ fun ExpandableShell(
                         // 不触发重组。模糊不走运行时 RenderEffect（每帧对不断长大的整屏图层做模糊），
                         // 改为 hero 封面本身就按小尺寸解码、放大后天然模糊——见 [CoverExpandShell]。
                         .graphicsLayer {
-                            val shellLeftNow = lerp(capsuleLeft, fullLeft, horizontal.value)
-                            val shellTopNow = lerp(capsuleTop, fullTop, vertical.value)
+                            val t = progressAnim.value
                             val target = heroTargetRect?.value
                             // 终点在壳局部坐标：窗口坐标 - 壳绘制原点（相减后终点不随壳移动）。
-                            val targetLeft = (target?.left ?: capsuleLeft) - shellLeftNow
-                            val targetTop = (target?.top ?: capsuleTop) - shellTopNow
-                            translationX = lerp(0f, targetLeft, horizontal.value)
-                            translationY = lerp(0f, targetTop, vertical.value)
+                            val targetLeft = (target?.left ?: capsuleLeft) - leftAt(t)
+                            val targetTop = (target?.top ?: capsuleTop) - topAt(t)
+                            translationX = lerp(0f, targetLeft, t)
+                            translationY = lerp(0f, targetTop, t)
                             alpha = heroAlpha.value
                         }
                         // 圆角必须**单独一层**（不能并进上面的 alpha 图层）：图层尺寸逐帧动画时，
@@ -452,7 +479,7 @@ fun ExpandableShell(
 
 /**
  * 通用「大封面卡 → 全屏内容」伸展壳：把卡片（窗口坐标 [fromRect]）长成全屏，期间用 hero 封面
- * 从卡片位置插值到内容里的 banner 封面，首尾无缝；左上角浮一个随进度淡入的收起按钮。
+ * 从卡片位置插值到内容里的 banner 封面，首尾无缝；左上角浮一个随展开进度淡入的收起按钮。
  *
  * 探索页（歌单/榜单 → 曲目列表）与「我的」页（大卡 → 曲目列表/歌单网格）共用本组件。
  *
@@ -523,16 +550,16 @@ fun CoverExpandShell(
             Box(Modifier.fillMaxSize()) {
                 content { coverReady.value = true }
                 // 关闭按钮：浮在左上、不随列表滚，随展开进度淡入（p=0 不可见、不响应点击）。
-                val progress = LocalShellProgress.current
+                val shellProgress = LocalShellProgress.current
                 Box(
                     Modifier
                         .align(Alignment.TopStart)
                         .padding(12.dp)
                         .size(36.dp)
-                        .graphicsLayer { alpha = progress.value }
+                        .graphicsLayer { alpha = shellProgress.value }
                         .clip(CircleShape)
                         .background(Color.Black.copy(alpha = 0.38f))
-                        .clickable { if (progress.value > 0.5f) onDismiss() },
+                        .clickable { if (shellProgress.value > 0.5f) onDismiss() },
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(

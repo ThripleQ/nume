@@ -12,7 +12,8 @@
 |---|---|---|
 | 改某个页面的文字 / 颜色 / 间距 / 按钮 | `ui/screens/<屏>Screen.kt` | 改界面基本只动这一个文件 |
 | 改迷你条 / 播放页（含手势、两段式展开） | `ui/playerbar/PlayerDock.kt` | dock + 全屏播放页合体，同一文件 |
-| 改「胶囊→全屏」通用伸展壳的动画 / 尾帧 | `ui/components/ExpandableShell.kt` | 我的页喜欢的音乐等复用 |
+| 改「胶囊→全屏」通用伸展壳的动画 / 尾帧 | `ui/components/ExpandableShell.kt` | 我的页喜欢的音乐等复用；单一时间基，宽高/圆角/hero 全由同一个 t 派生 |
+| 改动画**时长 / 曲线 / 圆角节奏**（壳与 dock 共用） | `ui/theme/Motion.kt` | 动效令牌唯一来源；两处手感不一致或想整体调快调慢，只改这里 |
 | 改全 app 的配色 / 明暗主题 | `ui/theme/Color.kt`、`ui/theme/Theme.kt` | 换品牌色、跟系统昼夜 |
 | 改字号、字重、字体 | `ui/theme/Type.kt` | |
 | 改底部导航胶囊：加删 tab、换图标、改顺序 | `NumeApp.kt` | 导航目的地也集中在这一个文件 |

@@ -1,15 +1,12 @@
 package com.thripleq.nume.ui.playerbar
 
+import com.thripleq.nume.ui.theme.Motion
 import com.thripleq.nume.ui.theme.NumeShape
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.AnimationSpec
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.exponentialDecay
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -292,16 +289,15 @@ private const val SPLIT_SQUEEZE = 0.5f
 /** 挤腰峰值圆角（dp）：分裂前拍交界处圆角从 0 涨到它，形成内收的腰。 */
 private val WAIST_CORNER_DP = 36f
 
-/** spring 动画参数：收起干净无回弹；点击展开略带弹性（让两段生长有「活」感）。 */
-private val SPRING_CLOSE = spring<Float>(
-    dampingRatio = Spring.DampingRatioNoBouncy,
-    stiffness = Spring.StiffnessMedium,
-)
+/**
+ * spring 动画参数：**数值保持原样，但集中到 [Motion]**。
+ *
+ * 壳与 dock 过去各写一套阻尼/刚度与时长，并排看就是「两个不同 App 的手感」；现在两处
+ * 同源于 [Motion]。刻意不改弹性数值——细胞分裂的吸附手感已在真机调过，盲改风险高于收益。
+ */
+private val SPRING_CLOSE = Motion.SheetSettle
 /** 点击整页展开：低阻尼带一点弹性过冲 + 中低刚度，既有生长过程可见、又跟手不闷。 */
-private val SPRING_FULL = spring<Float>(
-    dampingRatio = Spring.DampingRatioLowBouncy,
-    stiffness = Spring.StiffnessMediumLow,
-)
+private val SPRING_FULL = Motion.SheetExpand
 
 /** 分裂段进度 [0,1] 拆成两拍：挤腰 ([0,SPLIT_SQUEEZE]) 与 断开 ([SPLIT_SQUEEZE,1])。 */
 private fun splitSqueezeT(splitT: Float): Float = (splitT / SPLIT_SQUEEZE).coerceIn(0f, 1f)
@@ -560,18 +556,19 @@ fun PlayerDock(
             )
 
             // 列表详情页操作行（滚动把头部按钮顶出视口时显示）。
-            // 显式 tween(180)：默认 spring 与下方导航行动画（tween）不一致，
-            // 且滚动触发的显隐要利落，弹性 spec 会有拖泥带水感。
+            // 统一走 [Motion.MicroMs]：原先这里 180ms、下方导航行 enter 200ms，
+            // 两者是**同一事件驱动的成对切换**（操作行进、导航行退），时长不同 ⇒ 换行时
+            // 有 20ms 相位差，看着就是「不齐」。弹性 spec 也不用——显隐要利落。
             AnimatedVisibility(
                 visible = actionVisible,
                 enter = expandVertically(
                     expandFrom = Alignment.Top,
-                    animationSpec = tween(180, easing = FastOutSlowInEasing),
-                ) + fadeIn(animationSpec = tween(180, easing = FastOutSlowInEasing)),
+                    animationSpec = tween(Motion.MicroMs, easing = Motion.Standard),
+                ) + fadeIn(animationSpec = tween(Motion.MicroMs, easing = Motion.Standard)),
                 exit = shrinkVertically(
                     shrinkTowards = Alignment.Top,
-                    animationSpec = tween(180, easing = FastOutSlowInEasing),
-                ) + fadeOut(animationSpec = tween(180, easing = FastOutSlowInEasing)),
+                    animationSpec = tween(Motion.MicroMs, easing = Motion.Standard),
+                ) + fadeOut(animationSpec = tween(Motion.MicroMs, easing = Motion.Standard)),
             ) {
                 Column(Modifier.fillMaxWidth().height(actionHeight)) {
                     Box(
@@ -592,17 +589,18 @@ fun PlayerDock(
             }
 
             // 分隔线 + 底部导航行：展开壳看列表时整体收起（保留迷你播放条）。
-            // 与上方操作行同 spec：展开 200ms / 收起 180ms，tween 家族统一。
+            // 与上方操作行**完全同 spec**（同 [Motion.MicroMs] + 同曲线）：二者是同一次
+            // 滚动触发的成对换行，只有同相位才不会各走各的。
             AnimatedVisibility(
                 visible = navVisible,
                 enter = expandVertically(
                     expandFrom = Alignment.Top,
-                    animationSpec = tween(200, easing = FastOutSlowInEasing),
-                ) + fadeIn(animationSpec = tween(200, easing = FastOutSlowInEasing)),
+                    animationSpec = tween(Motion.MicroMs, easing = Motion.Standard),
+                ) + fadeIn(animationSpec = tween(Motion.MicroMs, easing = Motion.Standard)),
                 exit = shrinkVertically(
                     shrinkTowards = Alignment.Top,
-                    animationSpec = tween(180, easing = FastOutSlowInEasing),
-                ) + fadeOut(animationSpec = tween(180, easing = FastOutSlowInEasing)),
+                    animationSpec = tween(Motion.MicroMs, easing = Motion.Standard),
+                ) + fadeOut(animationSpec = tween(Motion.MicroMs, easing = Motion.Standard)),
             ) {
                 Column(Modifier.fillMaxWidth()) {
                     // 分隔线 = 播放条与导航之间的分隔线（内缩与胶囊对齐）。
