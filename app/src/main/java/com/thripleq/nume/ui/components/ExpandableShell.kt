@@ -447,6 +447,9 @@ fun ExpandableShell(
  *
  * @param coverUrl hero 封面 URL（应与起点卡片同源）；null 时 hero 用占位底
  * @param title    hero 封面上的名字
+ * @param meta     hero 封面名字下方的元信息（起点卡片上那行，如「114 首」）。传入后在
+ *                 p=0 时 hero 与卡片逐项一致——否则动画一开始卡片上的数量就被 hero 盖掉、
+ *                 结尾再冒出来，像闪一下。已拿到的数据应全程可见，不该重放。
  * @param watermarkIcon hero 的内容属性水印图标：与起点卡片、内容 banner 传同一个，
  *                 缺封面时三处都显示同一枚图标（否则 p=0 的 hero 与卡片对不上）
  * @param content  面板内容；参数 `onCoverReady` 在内容里的高清 banner 封面画出来后调用，
@@ -458,6 +461,7 @@ fun CoverExpandShell(
     coverUrl: String?,
     title: String,
     onDismiss: () -> Unit,
+    meta: String? = null,
     containerColor: Color = MaterialTheme.colorScheme.surface,
     shapeCornerDp: Dp = 16.dp,
     watermarkIcon: ImageVector? = null,
@@ -487,7 +491,13 @@ fun CoverExpandShell(
         heroTargetRect = coverRect,
         heroReady = coverReady,
         heroContent = {
-            BigCoverVisual(coverUrl, title, Modifier.fillMaxSize(), watermarkIcon = watermarkIcon)
+            BigCoverVisual(
+                coverUrl = coverUrl,
+                name = title,
+                modifier = Modifier.fillMaxSize(),
+                meta = meta,
+                watermarkIcon = watermarkIcon,
+            )
         },
         onDismiss = onDismiss,
         header = {},

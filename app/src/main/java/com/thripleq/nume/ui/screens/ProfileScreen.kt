@@ -157,6 +157,9 @@ private sealed interface ProfilePanel {
     /** 内容属性图标：卡片水印 / hero 水印 / banner 缺封面兜底三处共用。 */
     val icon: ImageVector
 
+    /** 起点卡片标题下方那行数据（如「114 首」）。hero 带同一份，展开时数量不闪。 */
+    val meta: String?
+
     /** 曲目列表（喜欢的音乐 / 已购）。 */
     data class Tracks(
         val source: String,
@@ -164,6 +167,7 @@ private sealed interface ProfilePanel {
         val title: String,
         override val coverUrl: String?,
         override val icon: ImageVector,
+        override val meta: String?,
     ) : ProfilePanel
 
     /** 歌单网格（创建 / 收藏）。 */
@@ -172,6 +176,7 @@ private sealed interface ProfilePanel {
         val playlists: List<PlaylistSummary>,
         override val coverUrl: String?,
         override val icon: ImageVector,
+        override val meta: String?,
     ) : ProfilePanel
 }
 
@@ -316,6 +321,13 @@ private fun LoggedInContent(
             UserCard(data.account)
             Spacer(Modifier.height(8.dp))
 
+            // 卡片与 hero/banner 共用同一份数据行文案：数字只算一次，卡片、hero、列表 banner
+            // 三处一致，展开全程数量可见、不闪。
+            val likedMeta = "${data.likedCount} 首"
+            val purchasedMeta = "${data.purchasedSongCount + data.purchasedAlbums.size} 项"
+            val createdMeta = "${data.createdPlaylists.size} 个歌单"
+            val subscribedMeta = "${data.subscribedPlaylists.size} 个歌单"
+
             // 2×2 大卡：与探索页大封面卡同风格（封面 + 底部标题/数量 + 内容属性水印），
             // 点击从该卡位置撑开对应全屏面板。
             val panels = listOf(
@@ -323,48 +335,52 @@ private fun LoggedInContent(
                     "liked", "", "喜欢的音乐",
                     coverUrl = data.likedCoverUrl,
                     icon = Icons.Filled.Favorite,
+                    meta = likedMeta,
                 ),
                 ProfilePanel.Tracks(
                     "purchased", "", "已购",
                     coverUrl = data.purchasedCoverUrl,
                     icon = Icons.Filled.ShoppingCart,
+                    meta = purchasedMeta,
                 ),
                 ProfilePanel.Playlists(
                     "创建的歌单",
                     data.createdPlaylists,
                     coverUrl = data.createdPlaylists.firstOrNull()?.coverUrl,
                     icon = Icons.Filled.List,
+                    meta = createdMeta,
                 ),
                 ProfilePanel.Playlists(
                     "收藏的歌单",
                     data.subscribedPlaylists,
                     coverUrl = data.subscribedPlaylists.firstOrNull()?.coverUrl,
                     icon = Icons.Filled.Star,
+                    meta = subscribedMeta,
                 ),
             )
             val entries = listOf(
                 ProfileCardEntry(
                     Icons.Filled.Favorite,
                     "喜欢的音乐",
-                    "${data.likedCount} 首",
+                    likedMeta,
                     data.likedCoverUrl,
                 ),
                 ProfileCardEntry(
                     Icons.Filled.ShoppingCart,
                     "已购",
-                    "${data.purchasedSongCount + data.purchasedAlbums.size} 项",
+                    purchasedMeta,
                     data.purchasedCoverUrl,
                 ),
                 ProfileCardEntry(
                     Icons.Filled.List,
                     "创建的歌单",
-                    "${data.createdPlaylists.size} 个歌单",
+                    createdMeta,
                     data.createdPlaylists.firstOrNull()?.coverUrl,
                 ),
                 ProfileCardEntry(
                     Icons.Filled.Star,
                     "收藏的歌单",
-                    "${data.subscribedPlaylists.size} 个歌单",
+                    subscribedMeta,
                     data.subscribedPlaylists.firstOrNull()?.coverUrl,
                 ),
             )
@@ -515,6 +531,8 @@ private fun ProfilePanel(
         coverUrl = target.coverUrl,
         title = target.title(),
         onDismiss = onDismiss,
+        // hero 带卡片同一份数据行：否则展开时 hero 盖掉卡片，数量消失、结尾再冒出（闪）。
+        meta = target.meta,
         watermarkIcon = target.icon,
     ) { onCoverReady ->
         when (target) {
@@ -586,7 +604,8 @@ private fun PlaylistGridPanel(
                     coverUrl = coverUrl,
                     name = title,
                     modifier = Modifier.fillMaxSize(),
-                    meta = if (playlists.isEmpty()) null else "${playlists.size} 个歌单",
+                    // 恒显示数量（含 0）：与卡片/hero 同文案，末尾交接不出现数据消失。
+                    meta = "${playlists.size} 个歌单",
                     scrimTop = 0.35f,
                     scrimAlpha = 0.85f,
                     requestSize = 1024,
