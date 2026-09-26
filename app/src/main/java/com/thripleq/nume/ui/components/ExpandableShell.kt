@@ -338,18 +338,14 @@ fun ExpandableShell(
                 // 裁剪/投影只在动画期间需要：稳态下壳铺满全屏，圆角与投影都不可见，
                 // 保留会给整屏壳套一层 RenderNode/offscreen，让滚动时整个列表每帧重录
                 // display list——这是列表卡顿的主因。
-                // 顶角圆角随展开收敛到 0：壳顶贴到屏幕顶后若还留圆角，会在屏幕两角露出底下
-                // 页面、收起裁剪时还会"跳方"。在 draw 阶段读 progress，不触发重组。
+                // 四角圆角随展开收敛到 0：壳还小的时候四角与起点卡片一致（p=0 时完全重合），
+                // 展开到底圆角归零、铺满全屏（顶贴屏幕顶、底贴屏底，圆角不再可见）。在 draw
+                // 阶段读 progress，不触发重组；仅动画期间保留裁剪/投影。
                 .then(
                     if (!settled.value || closing) {
                         Modifier.graphicsLayer {
                             val r = (cornerPx * (1f - vertical.value)).coerceAtLeast(0f)
-                            shape = RoundedCornerShape(
-                                topStart = r.toDp(),
-                                topEnd = r.toDp(),
-                                bottomStart = 0.dp,
-                                bottomEnd = 0.dp,
-                            )
+                            shape = RoundedCornerShape(r.toDp())
                             clip = true
                             shadowElevation = 1.dp.toPx()
                         }
@@ -430,11 +426,9 @@ fun ExpandableShell(
                             val placeable = measurable.measure(Constraints.fixed(w, h))
                             layout(w, h) { placeable.place(0, 0) }
                         }
-                        // 平移 / 透明度 / 圆角收进**同一个** graphicsLayer：几何与 alpha 在 layer
-                        // 更新阶段读动画值，不触发重组；shape + clip 让 hero 自带四角圆角（与卡片/
-                        // 终态封面吻合）。模糊不再走运行时 RenderEffect（每帧对不断长大的整屏图层做
-                        // 模糊、且 blur+clip 各自套一层 offscreen），改为 hero 封面本身就按小尺寸解码、
-                        // 放大后天然模糊——见 [CoverExpandShell] 的 requestSize。
+                        // 平移 / 透明度在同一个 graphicsLayer：几何与 alpha 在 layer 更新阶段读动画值，
+                        // 不触发重组。模糊不走运行时 RenderEffect（每帧对不断长大的整屏图层做模糊），
+                        // 改为 hero 封面本身就按小尺寸解码、放大后天然模糊——见 [CoverExpandShell]。
                         .graphicsLayer {
                             val shellLeftNow = lerp(capsuleLeft, fullLeft, horizontal.value)
                             val shellTopNow = lerp(capsuleTop, fullTop, vertical.value)
@@ -445,9 +439,11 @@ fun ExpandableShell(
                             translationX = lerp(0f, targetLeft, horizontal.value)
                             translationY = lerp(0f, targetTop, vertical.value)
                             alpha = heroAlpha.value
-                            shape = RoundedCornerShape(heroCornerDp)
-                            clip = true
-                        },
+                        }
+                        // 圆角必须**单独一层**（不能并进上面的 alpha 图层）：图层尺寸逐帧动画时，
+                        // `alpha` 与 `shape/clip` 同层会丢掉该层的 clip outline、四角变方。拆开后
+                        // clip 层无 alpha，圆角在整段动画里都保留（与卡片 / 终态封面吻合）。
+                        .clip(RoundedCornerShape(heroCornerDp)),
                 ) { heroContent() }
             }
         }
