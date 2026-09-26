@@ -1,5 +1,6 @@
 package com.thripleq.nume.ui.screens
 
+import com.thripleq.nume.ui.theme.NumeShape
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -24,7 +25,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Refresh
@@ -280,7 +280,7 @@ private fun BigCoverCard(
             .onGloballyPositioned { coords ->
                 rect = Rect(coords.localToWindow(Offset.Zero), coords.size.toSize())
             }
-            .clip(RoundedCornerShape(16.dp))
+            .clip(NumeShape.Card)
             .clickable { rect?.let(onClick) },
     ) {
         BigCoverVisual(coverUrl, name, Modifier.fillMaxSize())
@@ -304,7 +304,7 @@ private fun SmallTrackRow(track: Track, onClick: () -> Unit) {
         Box(
             Modifier
                 .size(52.dp)
-                .clip(RoundedCornerShape(8.dp)),
+                .clip(NumeShape.Chip),
         ) {
             if (model != null) {
                 val painter = rememberAsyncImagePainter(model)
@@ -422,7 +422,7 @@ private fun LoginPrompt(onLogin: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(NumeShape.Card)
             .background(MaterialTheme.colorScheme.secondaryContainer)
             .clickable(onClick = onLogin)
             .padding(horizontal = 16.dp, vertical = 14.dp),
@@ -495,7 +495,7 @@ private fun HomeSkeleton(bottomPadding: Dp) {
                 .padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            SkeletonLine(widthFraction = 0.24f, height = 28.dp, shape = RoundedCornerShape(8.dp))
+            SkeletonLine(widthFraction = 0.24f, height = 28.dp, shape = NumeShape.Chip)
             Spacer(Modifier.weight(1f))
             SkeletonBox(Modifier.size(28.dp), CircleShape)
         }
@@ -520,7 +520,7 @@ private fun SkeletonSectionHeader() {
         modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp),
         widthFraction = 0.3f,
         height = 22.dp,
-        shape = RoundedCornerShape(7.dp),
+        shape = NumeShape.Chip,
     )
 }
 
@@ -532,7 +532,7 @@ private fun SkeletonCarousel() {
             .padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        repeat(3) { SkeletonBox(Modifier.size(BigCoverSize), RoundedCornerShape(16.dp)) }
+        repeat(3) { SkeletonBox(Modifier.size(BigCoverSize), NumeShape.Card) }
     }
 }
 
@@ -544,7 +544,7 @@ private fun SkeletonTrackRow(artSize: Dp) {
             .padding(horizontal = 16.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SkeletonBox(Modifier.size(artSize), RoundedCornerShape(8.dp))
+        SkeletonBox(Modifier.size(artSize), NumeShape.Chip)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             SkeletonLine(widthFraction = 0.55f, height = 14.dp)

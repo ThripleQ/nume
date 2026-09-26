@@ -1,5 +1,6 @@
 package com.thripleq.nume.ui.screens
 
+import com.thripleq.nume.ui.theme.NumeShape
 import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -18,7 +19,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -82,7 +82,7 @@ private fun ChartList(charts: List<Chart>, onChart: (Chart) -> Unit) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(NumeShape.CardSmall)
                     .clickable { onChart(c) }
                     .padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -90,7 +90,7 @@ private fun ChartList(charts: List<Chart>, onChart: (Chart) -> Unit) {
                 Box(
                     Modifier
                         .size(52.dp)
-                        .clip(RoundedCornerShape(8.dp)),
+                        .clip(NumeShape.Chip),
                 ) {
                     c.coverUrl?.let { url ->
                         val painter = rememberAsyncImagePainter(Uri.parse(url))
@@ -139,7 +139,7 @@ private fun LibrarySkeleton() {
                     .padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SkeletonBox(Modifier.size(52.dp), RoundedCornerShape(8.dp))
+                SkeletonBox(Modifier.size(52.dp), NumeShape.Chip)
                 Spacer(Modifier.width(12.dp))
                 SkeletonLine(widthFraction = 0.5f, height = 16.dp)
             }

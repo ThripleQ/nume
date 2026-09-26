@@ -1,5 +1,6 @@
 package com.thripleq.nume.ui.screens
 
+import com.thripleq.nume.ui.theme.NumeShape
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -22,7 +23,6 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
@@ -214,12 +214,13 @@ private fun SkeletonCapsule() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            .clip(NumeShape.Card)
+            // 骨架家族统一用 surfaceVariant（与 Skeleton.kt 一致）；Highest 是播放页壳的层次
+            .background(MaterialTheme.colorScheme.surfaceVariant)
             .padding(horizontal = 16.dp, vertical = 18.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SkeletonBox(Modifier.size(36.dp), RoundedCornerShape(10.dp))
+        SkeletonBox(Modifier.size(36.dp), NumeShape.CardSmall)
         Spacer(Modifier.width(14.dp))
         SkeletonLine(widthFraction = 0.34f, height = 16.dp)
         Spacer(Modifier.weight(1f))
@@ -263,7 +264,7 @@ private fun LoginCard(onLogin: () -> Unit) {
             .fillMaxWidth()
             .padding(vertical = 8.dp)
             .clickable { onLogin() },
-        shape = RoundedCornerShape(16.dp),
+        shape = NumeShape.Card,
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -450,7 +451,7 @@ private fun ProfileBigCard(
             .onGloballyPositioned { coords ->
                 rect = Rect(coords.localToWindow(Offset.Zero), coords.size.toSize())
             }
-            .clip(RoundedCornerShape(16.dp))
+            .clip(NumeShape.Card)
             .clickable { onClick(rect) },
         meta = count,
         watermarkIcon = icon,
@@ -598,7 +599,7 @@ private fun PlaylistGridPanel(
                 Modifier
                     .fillMaxWidth()
                     .aspectRatio(1f)
-                    .clip(RoundedCornerShape(16.dp)),
+                    .clip(NumeShape.Card),
             ) {
                 BigCoverVisual(
                     coverUrl = coverUrl,
@@ -647,7 +648,7 @@ private fun PlaylistCell(
             Modifier
                 .fillMaxWidth()
                 .height(160.dp)
-                .clip(RoundedCornerShape(12.dp)),
+                .clip(NumeShape.CardSmall),
         ) {
             // model 整体 remember：AsyncImagePainter 以 model 为 key，避免每次重组
             // 新建 ImageRequest 重走请求分发；按 320px（160dp 封面 @2x）尺寸请求。

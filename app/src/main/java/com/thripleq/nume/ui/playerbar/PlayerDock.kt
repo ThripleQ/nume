@@ -1,5 +1,6 @@
 package com.thripleq.nume.ui.playerbar
 
+import com.thripleq.nume.ui.theme.NumeShape
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
@@ -661,7 +662,7 @@ private fun PlayerBar(
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
     val swipeThresholdPx = with(density) { SWIPE_THRESHOLD_DP.dp.toPx() }
-    val capsule = RoundedCornerShape(22.dp)
+    val capsule = NumeShape.Capsule
 
     Column(
         modifier = modifier
@@ -737,7 +738,7 @@ private fun PlayerBarContent(
         Box(
             modifier = Modifier
                 .size(44.dp)
-                .clip(RoundedCornerShape(12.dp)),
+                .clip(NumeShape.CardSmall),
         ) {
             val uri = playerState.coverUrl
             if (uri == null) {
@@ -841,7 +842,7 @@ private fun SpectrumPlaceholder() {
                     Modifier
                         .width(4.dp)
                         .height(h)
-                        .clip(RoundedCornerShape(2.dp))
+                        .clip(NumeShape.Track)
                         .background(MaterialTheme.colorScheme.outlineVariant),
                 )
             }
@@ -1188,7 +1189,7 @@ private fun PlayerPage(
                     Box(
                         Modifier
                             .size(width = 36.dp, height = 4.dp)
-                            .clip(RoundedCornerShape(2.dp))
+                            .clip(NumeShape.Track)
                             .background(
                                 MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                             ),
@@ -1243,7 +1244,8 @@ private fun PlayerPageContent(
     val coverCard = minOf(widthDp - 48.dp, heightDp * 0.58f)
     val coverFull = minOf(widthDp - 32.dp, heightDp * 0.45f)
     val coverDim = androidx.compose.ui.unit.lerp(coverCard, coverFull, sc)
-    val coverCorner = androidx.compose.ui.unit.lerp(18.dp, 24.dp, sc)
+    // 封面圆角：卡片档=Card(16)、全屏档=Capsule(22)（胶囊呼应）；Dp.lerp 需裸值，注释锚定语义
+    val coverCorner = androidx.compose.ui.unit.lerp(16.dp, 22.dp, sc)
     val titleGap = androidx.compose.ui.unit.lerp(14.dp, 20.dp, sc)
     val ctrlGap = androidx.compose.ui.unit.lerp(10.dp, 18.dp, sc)
     val sideBtnDim = androidx.compose.ui.unit.lerp(26.dp, 34.dp, sc)
@@ -1367,7 +1369,7 @@ private fun PlayerPageContent(
                     Modifier
                         .fillMaxWidth()
                         .height(4.dp)
-                        .clip(RoundedCornerShape(2.dp))
+                        .clip(NumeShape.Track)
                         .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)),
                 )
             }
@@ -1505,7 +1507,7 @@ private fun FullChip(
     FilledTonalIconButton(
         onClick = onClick,
         modifier = Modifier.size(width = 56.dp, height = 44.dp),
-        shape = RoundedCornerShape(16.dp),
+        shape = NumeShape.Card,
         colors = IconButtonDefaults.filledTonalIconButtonColors(
             containerColor = if (active) {
                 MaterialTheme.colorScheme.primaryContainer

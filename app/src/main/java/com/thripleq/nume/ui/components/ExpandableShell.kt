@@ -283,10 +283,14 @@ fun ExpandableShell(
     // （含内容子树：列表/网格），这是胶囊壳展开卡顿的主因。
     // 启动动画的 LaunchedEffect 不依赖这些值，读值下沉不影响动画本身。
 
-    // 占位层：盖住底下页面、拦截触摸。
+    // 占位层：盖住底下页面、拦截触摸。背景随竖向进度渐深（draw 阶段读值，不重组）——
+    // 胶囊壳「升起」的层次来源：底下页面退暗、壳浮在前，展开即建立 modal 焦点。
+    // graphicsLayer alpha 不影响 pointerInput 命中，触摸拦截不受影响。
     Box(
         Modifier
             .fillMaxSize()
+            .graphicsLayer { alpha = 0.32f * vertical.value }
+            .background(Color.Black)
             .onSizeChanged { viewWidth = it.width; viewHeight = it.height },
     ) {
         // 触摸拦截层（在壳之下、底下页面之上）：吃掉所有落在壳外的指针事件。

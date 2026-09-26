@@ -1,5 +1,6 @@
 package com.thripleq.nume.ui.screens
 
+import com.thripleq.nume.ui.theme.NumeShape
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.animation.Crossfade
@@ -279,7 +280,7 @@ private fun TrackListSkeleton(
                             Modifier
                         },
                     )
-                    .clip(RoundedCornerShape(16.dp)),
+                    .clip(NumeShape.Card),
             ) {
                 BigCoverVisual(
                     coverUrl = coverUrl,
@@ -290,7 +291,7 @@ private fun TrackListSkeleton(
                 )
             }
         } else {
-            SkeletonBox(coverModifier, RoundedCornerShape(16.dp))
+            SkeletonBox(coverModifier, NumeShape.Card)
         }
         Column(
             Modifier
@@ -318,7 +319,7 @@ private fun SkeletonTrackRow() {
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SkeletonBox(Modifier.size(48.dp), RoundedCornerShape(8.dp))
+        SkeletonBox(Modifier.size(48.dp), NumeShape.Chip)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             SkeletonLine(widthFraction = 0.6f, height = 14.dp)
@@ -373,7 +374,7 @@ private fun TrackListBannerHeader(
                         Modifier
                     },
                 )
-                .clip(RoundedCornerShape(16.dp)),
+                .clip(NumeShape.Card),
         ) {
             BigCoverVisual(
                 coverUrl = collection.coverUrl,
@@ -429,7 +430,7 @@ private fun trimZero(s: String) = if (s.endsWith(".0")) s.dropLast(2) else s
 /** 行级不可变基础 modifier（fillMaxWidth + 圆角裁剪），避免每次重组重建 modifier 链。 */
 private val trackRowBaseModifier = Modifier
     .fillMaxWidth()
-    .clip(RoundedCornerShape(10.dp))
+    .clip(NumeShape.CardSmall)
 
 @Composable
 private fun TrackRow(index: Int, track: Track, hPadding: Dp = 8.dp, onClick: () -> Unit) {
@@ -450,7 +451,7 @@ private fun TrackRow(index: Int, track: Track, hPadding: Dp = 8.dp, onClick: () 
         Box(
             modifier = Modifier
                 .size(48.dp)
-                .clip(RoundedCornerShape(8.dp)),
+                .clip(NumeShape.Chip),
         ) {
             if (artwork != null) {
                 val painter = rememberAsyncImagePainter(artwork)

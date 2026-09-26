@@ -74,6 +74,7 @@ fun NumeTheme(
     MaterialTheme(
         colorScheme = colorScheme,
         typography = Typography,
+        shapes = NumeShapes,
         content = content,
     )
 }

@@ -1,10 +1,10 @@
 package com.thripleq.nume.ui.components
 
+import com.thripleq.nume.ui.theme.NumeShape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -24,7 +24,7 @@ import com.valentinilk.shimmer.shimmer
 @Composable
 fun SkeletonBox(
     modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(8.dp),
+    shape: Shape = NumeShape.Chip,
 ) {
     Box(modifier.clip(shape).background(MaterialTheme.colorScheme.surfaceVariant))
 }
@@ -35,7 +35,7 @@ fun SkeletonLine(
     modifier: Modifier = Modifier,
     widthFraction: Float = 1f,
     height: Dp = 14.dp,
-    shape: Shape = RoundedCornerShape(6.dp),
+    shape: Shape = NumeShape.Chip,
 ) {
     SkeletonBox(modifier.fillMaxWidth(widthFraction).height(height), shape)
 }
