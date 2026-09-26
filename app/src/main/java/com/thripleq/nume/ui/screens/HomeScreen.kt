@@ -63,6 +63,7 @@ import coil.request.ImageRequest
 import com.thripleq.nume.core.repo.Track
 import com.thripleq.nume.ui.components.BigCoverVisual
 import com.thripleq.nume.ui.components.CoverExpandShell
+import com.thripleq.nume.ui.components.HeroCoverSize
 import com.thripleq.nume.ui.components.ShimmerImagePlaceholder
 import com.thripleq.nume.ui.components.SkeletonBox
 import com.thripleq.nume.ui.components.SkeletonLine
@@ -283,7 +284,7 @@ private fun BigCoverCard(
             .clip(NumeShape.Card)
             .clickable { rect?.let(onClick) },
     ) {
-        BigCoverVisual(coverUrl, name, Modifier.fillMaxSize())
+        BigCoverVisual(coverUrl, name, Modifier.fillMaxSize(), preloadSize = HeroCoverSize)
     }
 }
 

@@ -38,7 +38,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -58,6 +57,9 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+
+/** 壳展开时「壳以外区域」背景退暗的最大不透明度（随竖向进度渐深）。 */
+private const val SHELL_SCRIM_ALPHA = 0.32f
 
 /**
  * 壳当前展开进度（0..1）的 [State]，供内容里的浮层（如关闭按钮、banner 内缩）读取。
@@ -146,7 +148,6 @@ fun Modifier.shellTopInset(progress: State<Float>, insetPx: Float): Modifier =
  * @param heroContent   hero 覆盖层内容（通常与起点卡片封面同源）。null 则不绘制 hero。
  * @param heroCornerDp  hero 圆角（四角）。壳只圆顶角、底角是直角，hero 必须自带四角圆角，
  *                      否则 p=0 时底角与卡片对不上；应等于起点卡片/终态封面的圆角。
- * @param heroBlurDp    hero 未被交接时的模糊半径：低清封面被放大铺满，模糊可掩盖像素化。
  * @param onDismiss 关闭动画完全结束、壳复位后才回调（调用方借此移除本组件）
  * @param header    壳顶部标题栏（必须与胶囊头部同源）；接收 [onClose]，收起按钮应调它触发关闭动画。
  *                  [contentFromStart] 为 true 时不渲染。
@@ -165,7 +166,6 @@ fun ExpandableShell(
     heroReady: State<Boolean>? = null,
     heroContent: (@Composable () -> Unit)? = null,
     heroCornerDp: Dp = 16.dp,
-    heroBlurDp: Dp = 16.dp,
     onDismiss: () -> Unit,
     header: @Composable (onClose: () -> Unit) -> Unit,
     content: @Composable () -> Unit,
@@ -195,9 +195,6 @@ fun ExpandableShell(
     val horizontal = remember { Animatable(0f) }
     // Hero 透明度：1 = 低清 hero 顶着，0 = 已交接给高清封面。
     val heroAlpha = remember { Animatable(1f) }
-    // 模糊半径的量化跟随态（与 heroAlpha 同步，5% 步长）：draw 阶段读不了 Animatable
-    // 到 Modifier.blur（组合期参数），量化后重组次数收敛到交接期 ~20 次，仅 hero 节点。
-    val heroBlurState = remember { derivedStateOf { (heroAlpha.value * 20f).toInt() / 20f } }
     // 暴露给内容的只读进度 State（Animatable 本身不是 State，用 derivedStateOf 包一层）。
     val horizontalState = remember { derivedStateOf { horizontal.value } }
     val verticalState = remember { derivedStateOf { vertical.value } }
@@ -283,16 +280,23 @@ fun ExpandableShell(
     // （含内容子树：列表/网格），这是胶囊壳展开卡顿的主因。
     // 启动动画的 LaunchedEffect 不依赖这些值，读值下沉不影响动画本身。
 
-    // 占位层：盖住底下页面、拦截触摸。背景随竖向进度渐深（draw 阶段读值，不重组）——
-    // 胶囊壳「升起」的层次来源：底下页面退暗、壳浮在前，展开即建立 modal 焦点。
-    // graphicsLayer alpha 不影响 pointerInput 命中，触摸拦截不受影响。
+    // 占位层：盖住底下页面、拦截触摸。
     Box(
         Modifier
             .fillMaxSize()
-            .graphicsLayer { alpha = 0.32f * vertical.value }
-            .background(Color.Black)
             .onSizeChanged { viewWidth = it.width; viewHeight = it.height },
     ) {
+        // 背景 scrim：随竖向进度渐深（draw 阶段读值，不重组）——胶囊壳「升起」的层次来源，
+        // 底下页面退暗、壳浮在前，展开即建立 modal 焦点。
+        // 必须是**独立一层**：若把 alpha 加在整个占位层上，壳与内容会被一起淡化（展开后的
+        // 面板变半透明），还会给整屏内容套一层 offscreen、滚动时每帧重录。它只盖住「壳以外」
+        // 的区域——壳不透明且展开后铺满全屏，稳态下被壳完全遮住。
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer { alpha = SHELL_SCRIM_ALPHA * vertical.value }
+                .background(Color.Black),
+        )
         // 触摸拦截层（在壳之下、底下页面之上）：吃掉所有落在壳外的指针事件。
         // 否则展开动画期间壳还小，手指会穿透去滑动底下的列表；底下页面一滚，收起时
         // fromRect（进入时捕获的卡片位置）就与实际位置错位了。
@@ -426,6 +430,11 @@ fun ExpandableShell(
                             val placeable = measurable.measure(Constraints.fixed(w, h))
                             layout(w, h) { placeable.place(0, 0) }
                         }
+                        // 平移 / 透明度 / 圆角收进**同一个** graphicsLayer：几何与 alpha 在 layer
+                        // 更新阶段读动画值，不触发重组；shape + clip 让 hero 自带四角圆角（与卡片/
+                        // 终态封面吻合）。模糊不再走运行时 RenderEffect（每帧对不断长大的整屏图层做
+                        // 模糊、且 blur+clip 各自套一层 offscreen），改为 hero 封面本身就按小尺寸解码、
+                        // 放大后天然模糊——见 [CoverExpandShell] 的 requestSize。
                         .graphicsLayer {
                             val shellLeftNow = lerp(capsuleLeft, fullLeft, horizontal.value)
                             val shellTopNow = lerp(capsuleTop, fullTop, vertical.value)
@@ -436,13 +445,9 @@ fun ExpandableShell(
                             translationX = lerp(0f, targetLeft, horizontal.value)
                             translationY = lerp(0f, targetTop, vertical.value)
                             alpha = heroAlpha.value
-                        }
-                        // 模糊半径随 heroAlpha 连续衰减（5% 量化 → 交接期最多 20 次重组，
-                        // 仅 hero 这一个小节点，代价可控；API 26 兼容）。
-                        // 就绪瞬间硬切 blur→0 会跳「糊→清晰」；与 220ms 渐隐同步淡出。
-                        .blur(heroBlurDp * heroBlurState.value)
-                        // 壳只圆顶角，hero 自带四角圆角才能与卡片/终态封面吻合。
-                        .clip(RoundedCornerShape(heroCornerDp)),
+                            shape = RoundedCornerShape(heroCornerDp)
+                            clip = true
+                        },
                 ) { heroContent() }
             }
         }
@@ -509,6 +514,10 @@ fun CoverExpandShell(
                 name = title,
                 modifier = Modifier.fillMaxSize(),
                 meta = meta,
+                // hero 从卡片大小长到满屏：按小尺寸解码、放大后天然模糊，掩盖低清像素化。
+                // 同时保证与卡片封面同源：卡片会预解码同一尺寸（见 BigCoverVisual.preloadSize），
+                // 所以这里是内存命中的瞬时帧，不会出现等图占位。
+                requestSize = HeroCoverSize,
                 watermarkIcon = watermarkIcon,
             )
         },

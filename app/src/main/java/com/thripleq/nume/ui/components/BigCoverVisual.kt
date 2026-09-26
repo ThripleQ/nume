@@ -28,7 +28,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImagePainter
 import coil.compose.rememberAsyncImagePainter
+import coil.imageLoader
 import coil.request.ImageRequest
+
+/**
+ * 展开壳 hero 封面的解码尺寸（px）。小尺寸放大铺满即天然模糊，用来掩盖低清像素化——
+ * 比每帧对长大的图层跑 `Modifier.blur`/RenderEffect 便宜得多，且模糊是烘焙在位图里的、只算一次。
+ * 卡片用 [BigCoverVisual.preloadSize] 预解码同一尺寸，面板打开时 hero 直接内存命中。
+ */
+const val HeroCoverSize = 96
 
 /**
  * 封面 + 底部渐变遮罩 + 左下角名字（可选元信息）。
@@ -42,6 +50,8 @@ import coil.request.ImageRequest
  * @param scrimTop 渐变遮罩起始位置（0..1，越大遮罩越短）；banner 需承载多行文字故可调高
  * @param scrimAlpha 渐变底部黑度（0..1），保证文字可读
  * @param requestSize 解码尺寸（px）。卡片/hero 用 480（小图先顶），全屏 banner 用更大值拿到高清版。
+ * @param preloadSize 非空时额外预解码一张该尺寸的封面（内存缓存），供展开壳 hero 用。
+ *                    卡片传 [HeroCoverSize]，hero 才能内存命中、瞬时出现。
  * @param onLoadSuccess 封面真正绘制出来（加载成功或失败落定）时回调一次；供 hero 交接。
  * @param watermarkIcon 内容属性水印：非空时——缺封面用 `secondaryContainer` 底 + 大号图标兜底；
  *                  有封面则在同一位置压一枚淡水印。卡片/hero/banner 传同一图标，三位一体。
@@ -56,6 +66,7 @@ fun BigCoverVisual(
     scrimTop: Float = 0.5f,
     scrimAlpha: Float = 0.66f,
     requestSize: Int = 480,
+    preloadSize: Int? = null,
     onLoadSuccess: (() -> Unit)? = null,
     watermarkIcon: ImageVector? = null,
 ) {
@@ -63,6 +74,15 @@ fun BigCoverVisual(
         val context = LocalContext.current
         val model = remember(coverUrl, requestSize) {
             coverUrl?.let { ImageRequest.Builder(context).data(it).size(requestSize).build() }
+        }
+        // 预解码 hero 要的小尺寸变体：卡片还在时就备好，面板打开时 hero 内存命中、不等解码。
+        if (preloadSize != null && coverUrl != null && preloadSize != requestSize) {
+            val appContext = context.applicationContext
+            LaunchedEffect(coverUrl, preloadSize) {
+                appContext.imageLoader.enqueue(
+                    ImageRequest.Builder(appContext).data(coverUrl).size(preloadSize).build(),
+                )
+            }
         }
         if (model != null) {
             // 占位微光仅在加载中组合，加载完成即移除（不再常驻无限扫光）。
