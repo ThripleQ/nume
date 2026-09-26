@@ -1,8 +1,8 @@
 package com.thripleq.nume.ui.components
 
+import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -39,7 +39,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -82,7 +84,7 @@ val LocalShellSettled: androidx.compose.runtime.ProvidableCompositionLocal<State
 
 /**
  * hero 覆盖层当前的不透明度（[State]，只在 draw 阶段读取）：
- * 1 = 低清 hero 顶着（交接前），0 = 已交接给内容里的高清封面。
+ * 1 = hero 封面顶着（交接前），0 = 已交接给内容里的高清封面。
  *
  * 内容里的 banner / 骨架封面据此**在 hero 之下铺底**：`alpha = if (该值 >= 1) 0 else 1`。
  * - hero 完全不透明时内容封面隐藏 —— 否则展开期间「hero + 固定排版的内容封面」两层重影。
@@ -94,6 +96,15 @@ val LocalShellSettled: androidx.compose.runtime.ProvidableCompositionLocal<State
  */
 val LocalShellHeroAlpha: androidx.compose.runtime.ProvidableCompositionLocal<State<Float>> =
     staticCompositionLocalOf { mutableStateOf(0f) }
+
+/**
+ * 壳是否正在播放**收起**动画（[State]，只在需要时读取）。内容可借此把「列表行淡出」等退场
+ * 过渡与壳的缩回同步；否则行区只会被壳的裁剪窗口"擦掉"，显得生硬。
+ *
+ * 非壳环境默认 false，内容不参与退场淡化。
+ */
+val LocalShellClosing: androidx.compose.runtime.ProvidableCompositionLocal<State<Boolean>> =
+    staticCompositionLocalOf { mutableStateOf(false) }
 
 /**
  * 水平内缩随壳展开进度收缩：语义等价于 `padding(horizontal = maxInset * progress)`，
@@ -229,12 +240,14 @@ fun ExpandableShell(
     // ── 单一时间基：整只壳只有这一个进度时钟 ──
     // 宽 / 高 / 平移 / 圆角 / hero / scrim 一律由它派生，不再各跑各的 tween。
     val progressAnim = remember { Animatable(0f) }
-    // Hero 透明度：1 = 低清 hero 顶着，0 = 已交接给高清封面。
+    // Hero 透明度：1 = hero 封面顶着，0 = 已交接给高清封面。
     val heroAlpha = remember { Animatable(1f) }
     // 暴露给内容的只读进度 State（Animatable 本身不是 State，用 derivedStateOf 包一层）。
     val progressState = remember { derivedStateOf { progressAnim.value } }
     // hero 透明度的只读 State：内容封面据此与 hero 互补（见 [LocalShellHeroAlpha]）。
     val heroAlphaState = remember { derivedStateOf { heroAlpha.value } }
+    // 收起的只读 State：内容据此做退场淡出（与壳缩回同步，见 [LocalShellClosing]）。
+    val closingState = remember { derivedStateOf { closing } }
 
     // 外部受控进度：跟手时直接驱动壳几何（snap），不受内部动画干扰。
     // 关闭动画从当前进度续跑；打开动画仅在无外部进度时自动跑。
@@ -267,14 +280,15 @@ fun ExpandableShell(
     }
 
     // Hero 交接：高清封面就绪、且壳已基本展开后，hero 原地渐变淡出（数据没到就一直顶着，
-    // 不查“加载状态”，只看封面是否已绘制出来）。关闭时 hero 快速渐显顶回，
-    // 尾帧照样精确缩回卡片；snapTo 会闪（高清已交接后 hero 瞬间叠现在内容上）。
+    // 不查"加载状态"，只看封面是否已绘制出来）。关闭时 hero 立即接管封面：内容封面**同帧**隐藏，
+    // 避免 hero 与内容封面同时可见、彼此错位。交接后 hero 恰好停在内容封面终态位（p=1 对齐契约），
+    // 故瞬时替换在视觉上不可见。
     // 等壳展开再淡出很关键：否则高清封面若本来就绪，hero 会在展开初期就消失，露出固定排版的
     // 裁切内容（看起来像没优化）。
     val ready = heroReady?.value == true
     LaunchedEffect(ready, closing) {
         when {
-            closing -> heroAlpha.animateTo(1f, tween(Motion.HeroReturnMs, easing = LinearEasing))
+            closing -> heroAlpha.snapTo(1f)
             !ready -> Unit
             else -> {
                 snapshotFlow { progressAnim.value }.first { it >= Motion.HeroHandoffAt }
@@ -448,6 +462,7 @@ fun ExpandableShell(
                             LocalShellProgress provides progressState,
                             LocalShellSettled provides settled,
                             LocalShellHeroAlpha provides heroAlphaState,
+                            LocalShellClosing provides closingState,
                         ) {
                             content()
                         }
@@ -472,24 +487,47 @@ fun ExpandableShell(
                             val placeable = measurable.measure(Constraints.fixed(w, h))
                             layout(w, h) { placeable.place(0, 0) }
                         }
-                        // 平移 / 透明度在同一个 graphicsLayer：几何与 alpha 在 layer 更新阶段读动画值，
-                        // 不触发重组。模糊不走运行时 RenderEffect（每帧对不断长大的整屏图层做模糊），
-                        // 改为 hero 封面本身就按小尺寸解码、放大后天然模糊——见 [CoverExpandShell]。
+                        // 平移单独放最外层：圆角/模糊层都在它内部，于是裁剪窗口随 hero 一起移动。
                         .graphicsLayer {
                             val t = progressAnim.value
                             val target = heroTargetRect?.value
-                            // 终点在壳局部坐标：窗口坐标 - 壳绘制原点（相减后终点不随壳移动）。
-                            val targetLeft = (target?.left ?: capsuleLeft) - leftAt(t)
-                            val targetTop = (target?.top ?: capsuleTop) - topAt(t)
-                            translationX = lerp(0f, targetLeft, t)
-                            translationY = lerp(0f, targetTop, t)
-                            alpha = heroAlpha.value
+                            // 终点用**屏幕绝对坐标**再乘 t：壳原点在屏幕上按 capsule*(1-t) 线性移动，
+                            // 只有 local(t) = t*target 才能让 hero 的**屏幕**轨迹是线性 lerp(capsule, target)。
+                            // 若先减壳原点再 lerp（旧写法），会多出 capsule*(1-t) 一项 → hero 上边/左边
+                            // 比窗口跑得快，冲出窗口被其直边切平 → 顶角变方、出现锐角（19:26 截图）。
+                            val targetLeft = target?.left ?: capsuleLeft
+                            val targetTop = target?.top ?: capsuleTop
+                            translationX = targetLeft * t
+                            translationY = targetTop * t
                         }
-                        // 圆角必须**单独一层**（不能并进上面的 alpha 图层）：图层尺寸逐帧动画时，
-                        // `alpha` 与 `shape/clip` 同层会丢掉该层的 clip outline、四角变方。拆开后
-                        // clip 层无 alpha，圆角在整段动画里都保留（与卡片 / 终态封面吻合）。
-                        .clip(RoundedCornerShape(heroCornerDp)),
-                ) { heroContent() }
+                        // 圆角**单独一层、且不含 alpha / 模糊**：图层尺寸逐帧动画时，`alpha`（或
+                        // `renderEffect`）与 `shape/clip` 同层会丢掉该层的 clip outline、四角变方、
+                        // 出现缺角。拆开后该层无 alpha/effect，圆角在整段动画里都保留。
+                        .clip(RoundedCornerShape(heroCornerDp))
+                        // 透明度 + 运行时模糊放圆角层**内部**：模糊结果被外层圆角裁掉，于是"失焦"
+                        // 不会把四角糊成直角。半径按进度两端为 0、中段最强，< 0.5px 即摘掉 effect——
+                        // "图层最满屏"的那几帧并不糊，规避整屏逐帧模糊开销。
+                        .graphicsLayer {
+                            alpha = heroAlpha.value
+                            // p=0 半径 0（与卡片逐像素吻合）、p=1 归零（交接前已清晰），中段最强。
+                            // API < 31 无 RenderEffect，优雅降级为不模糊。
+                            val blur = Motion.heroBlurPx(progressAnim.value)
+                            renderEffect = if (Build.VERSION.SDK_INT >= 31 && blur >= 0.5f) {
+                                BlurEffect(blur, blur, TileMode.Clamp)
+                            } else {
+                                null
+                            }
+                        },
+                ) {
+                    // 把壳进度/收起状态也下发给 hero 槽：hero 文本据此在展开初期淡出、收起末期才淡入，
+                    // 避免盒子逐帧重排导致元信息"跳动"（见 CoverExpandShell 的 heroContent）。
+                    CompositionLocalProvider(
+                        LocalShellProgress provides progressState,
+                        LocalShellClosing provides closingState,
+                    ) {
+                        heroContent()
+                    }
+                }
             }
         }
     }
@@ -550,15 +588,26 @@ fun CoverExpandShell(
         heroTargetRect = coverRect,
         heroReady = coverReady,
         heroContent = {
+            // hero 盒子逐帧缩放，其中的名字/元信息会被每帧重新排版——长文本的换行/省略号
+            // 因此逐帧移动（看着像"跳动/自动截断"）。文本只在壳体≈卡片大小时可见：
+            // 展开早期淡出、收起末尾才淡入（[Motion.heroTextAlpha]），观感改为纯淡入淡出。
+            val heroProgress = LocalShellProgress.current
+            val shellClosing = LocalShellClosing.current
+            val heroTextAlpha = remember(heroProgress, shellClosing) {
+                derivedStateOf {
+                    Motion.heroTextAlpha(heroProgress.value, shellClosing.value)
+                }
+            }
             BigCoverVisual(
                 coverUrl = coverUrl,
                 name = title,
                 modifier = Modifier.fillMaxSize(),
                 meta = meta,
-                // hero 从卡片大小长到满屏：按小尺寸解码、放大后天然模糊，掩盖低清像素化。
-                // 同时保证与卡片封面同源：卡片会预解码同一尺寸（见 BigCoverVisual.preloadSize），
-                // 所以这里是内存命中的瞬时帧，不会出现等图占位。
-                requestSize = HeroCoverSize,
+                // hero 与卡片**同源同尺寸**（[CardCoverSize]）：卡片按此解码，hero 请求命中内存、
+                // 瞬时出现，且 p=0 时与卡片逐像素吻合。展开中的失焦由 ExpandableShell 里的运行时
+                // 模糊按进度驱动，不再靠"低清放大"。
+                requestSize = CardCoverSize,
+                textAlpha = heroTextAlpha,
                 watermarkIcon = watermarkIcon,
             )
         },

@@ -48,8 +48,11 @@ object Motion {
      * t < CornerHold 时圆角完全不收敛——此阶段壳仍是卡片比例，圆角必须与父级卡片
      * 逐像素一致（这是「与父级内容完美衔接」契约的一部分）；越过该点后 smoothstep
      * 平滑收敛到 0，既不提前变形，也不在末段"啪"地变方。
+     *
+     * 取 0.85（原为 0.55）：壳在「明显还是个小于全屏的窗口」的整段都保持圆角，只有临近
+     * 铺满的最后 15% 才归零——否则后程圆角早早消失、窗口看着很尖锐。
      */
-    const val CornerHold = 0.55f
+    const val CornerHold = 0.85f
 
     /**
      * hero 低清封面与内容里高清 banner 的交接阈值。
@@ -62,8 +65,48 @@ object Motion {
     /** 交接淡出时长。 */
     const val HeroFadeMs = 220
 
-    /** hero 在收起时顶回来的时长（要快，不能挡住缩回动画）。 */
-    const val HeroReturnMs = 120
+    /** hero 封面运行时模糊的峰值半径（px）。 */
+    const val HeroBlurMaxPx = 28f
+
+    /** hero 模糊升到峰值所占的进度比例：之后一路衰减回 0。 */
+    const val HeroBlurRise = 0.25f
+
+    /**
+     * hero 封面的运行时模糊半径（px）随展开进度 t——「拉开时轻微失焦、落定前重新合焦」。
+     *
+     * - `t=0` 为 0：首帧必须与起点卡片逐像素吻合，不能是糊的。
+     * - 前 [HeroBlurRise] 段快速升到 [HeroBlurMaxPx]：此时图层还小、模糊最便宜。
+     * - 之后 smoothstep 衰减，`t=1` 精确归零：交接前已清晰，与内容里的高清封面同形，
+     *   淡化不可见；且全屏（图层最大）那一刻半径已≈0，调用方可直接摘掉 effect。
+     */
+    fun heroBlurPx(t: Float): Float {
+        fun smooth(x: Float) = x * x * (3f - 2f * x)
+        val rise = smooth((t / HeroBlurRise).coerceIn(0f, 1f))
+        val fall = smooth((1f - t).coerceIn(0f, 1f))
+        return HeroBlurMaxPx * rise * fall
+    }
+
+    /**
+     * hero 文本（名字/元信息）淡出/淡入的进度窗口。
+     *
+     * 展开时窗口宽（[HeroTextFadeOutAt]）：壳一开始长大就让文本淡走，观感自然。
+     * 收起时窗口窄（[HeroTextFadeInAt]）：hero 缩回过程中全程不放文本，直到**几乎等于卡片大小**
+     * 才淡入——否则文本随盒子逐帧重排、换行/省略号来回移动，看着"跳（自动截断）"。
+     */
+    const val HeroTextFadeOutAt = 0.18f
+    const val HeroTextFadeInAt = 0.06f
+
+    /**
+     * hero 文本透明度随进度 t：两端为 1（p=0 与卡片、p=1 与内容封面逐项吻合），中间为 0，
+     * 避免 hero 盒子逐帧缩放时文本被每帧重新排版而"跳动"。
+     *
+     * @param closing 收起方向用更窄的窗口：只在末尾、盒子已≈卡片大小时才淡入，收起全程看不到重排。
+     */
+    fun heroTextAlpha(t: Float, closing: Boolean): Float {
+        fun smooth(x: Float) = x * x * (3f - 2f * x)
+        val window = if (closing) HeroTextFadeInAt else HeroTextFadeOutAt
+        return 1f - smooth((t / window).coerceIn(0f, 1f))
+    }
 
     // ── 壳动画 spec ─────────────────────────────────────────────────
     /** 壳展开（点击进入全屏）。 */

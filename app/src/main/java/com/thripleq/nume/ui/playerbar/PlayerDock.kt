@@ -342,7 +342,18 @@ class PlayerDockState internal constructor(
     val progress: Float
         get() = (sheetState.offset / travelPx).coerceIn(0f, 2f)
 
-    /** 迷你条胶囊的窗口坐标 Rect（动画起点）。由 PlayerBar 上报；拖动/收起时定格使用。 */
+    /**
+     * 迷你条胶囊的窗口坐标 Rect（**遗留字段：当前无任何读取方**）。
+     *
+     * 由 [PlayerBar] 在 padding 之前实测上报。`1613459`（commit 名 capsule-origin geometry）曾以它
+     * 作展开几何起点（`lerp(capsuleRect → card → full)`）；`973a453` 改「气泡/分裂」模型后，几何改由
+     * dock 顶推导（见 [PlayerPage] 的 `shellRect`：`dockTopPx = fullHeightPx - dockHeightPx`），
+     * 对它的**读取随之删除**，只剩声明与上报。
+     *
+     * 保留仅为日后若回归「从真实胶囊矩形起跳」时取数；若确定不再回归，可连同 [PlayerBar] 的
+     * 上报一并删除。
+     */
+    @Deprecated("capsule-origin 几何的遗留：当前展开几何为 dock-origin，本字段已无读取方")
     var capsuleRect by mutableStateOf<Rect?>(null)
         internal set
 
@@ -356,8 +367,8 @@ class PlayerDockState internal constructor(
         animJob = scope.launch {
             if (!open) {
                 open = true
-                // 等一帧，等壳（PlayerPage）组合、capsuleRect 就位（首帧=胶囊原位，
-                // 从当前位置续跑展开，而不是 snap 到 0 再展开——第一帧就是迷你条本身）。
+                // 等一帧，等壳（PlayerPage）组合就位，从当前 offset 续跑展开，
+                // 而不是先 snap 到 0 再展开——第一帧就是迷你条本身。
                 withFrameNanos { }
                 sheetState.animateTo(
                     if (toFull) PlayerSheet.Full else PlayerSheet.Half,
@@ -671,6 +682,7 @@ private fun PlayerBar(
             // 上报迷你条胶囊的窗口坐标：胶囊展开动画的起点（从胶囊原位长成卡片/全屏）。
             // 必须在 padding 之前测，bounds 才是视觉胶囊本身。
             .onGloballyPositioned { coords ->
+                @Suppress("DEPRECATION") // 遗留上报：保留 capsule-origin 起点数据，当前无读取方。
                 state.capsuleRect = Rect(coords.localToWindow(Offset.Zero), coords.size.toSize())
             }
             // 官方 anchoredDraggable：竖向把播放面拉起来（内部处理 slop 仲裁 / 松手吸附 / 甩动）。

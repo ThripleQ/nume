@@ -69,7 +69,6 @@ import com.thripleq.nume.core.repo.PlaylistSummary
 import com.thripleq.nume.core.repo.ProfileData
 import com.thripleq.nume.ui.components.BigCoverVisual
 import com.thripleq.nume.ui.components.CoverExpandShell
-import com.thripleq.nume.ui.components.HeroCoverSize
 import com.thripleq.nume.ui.components.LocalShellHeroAlpha
 import com.thripleq.nume.ui.components.ShimmerImagePlaceholder
 import com.thripleq.nume.ui.components.SkeletonBox
@@ -457,7 +456,6 @@ private fun ProfileBigCard(
             .clip(NumeShape.Card)
             .clickable { onClick(rect) },
         meta = count,
-        preloadSize = HeroCoverSize,
         watermarkIcon = icon,
     )
 }

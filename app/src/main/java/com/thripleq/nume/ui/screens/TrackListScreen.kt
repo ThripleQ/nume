@@ -35,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -66,6 +67,7 @@ import coil.request.ImageRequest
 import com.thripleq.nume.core.repo.Track
 import com.thripleq.nume.core.repo.TrackCollection
 import com.thripleq.nume.ui.components.BigCoverVisual
+import com.thripleq.nume.ui.components.LocalShellClosing
 import com.thripleq.nume.ui.components.LocalShellHeroAlpha
 import com.thripleq.nume.ui.components.LocalShellProgress
 import com.thripleq.nume.ui.components.LocalShellSettled
@@ -192,11 +194,25 @@ fun TrackListScreen(
             state is TrackListUiState.Error -> TrackListUiState.Error
             else -> TrackListUiState.Loading
         }
-        val skeletonAlpha by animateFloatAsState(
+        val skeletonAlpha = animateFloatAsState(
             targetValue = if (display is TrackListUiState.Loading) 1f else 0f,
             animationSpec = tween(260),
             label = "trackListSkeletonAlpha",
         )
+        // 内容「浮现度」：与骨架淡出严格互补（不重组，供 draw 阶段读）。
+        // 骨架下的 meta/按钮直接满不透明出现会像"闪现"，用它做出场淡入。
+        val contentReveal = remember(skeletonAlpha) { derivedStateOf { 1f - skeletonAlpha.value } }
+        // 收起退场：壳开始缩回时列表行淡出，避免被裁剪窗口硬"擦"掉（非壳环境恒 1）。
+        val shellClosing = LocalShellClosing.current
+        val exitAlpha = animateFloatAsState(
+            targetValue = if (shellClosing.value) 0f else 1f,
+            animationSpec = tween(200),
+            label = "trackListExitAlpha",
+        )
+        // 列表行的最终透明度 = 出场浮现 × 退场淡出（draw 阶段读，不重组）。
+        val rowsAlpha = remember(contentReveal, exitAlpha) {
+            derivedStateOf { contentReveal.value * exitAlpha.value }
+        }
         Box(Modifier.fillMaxSize()) {
             when (display) {
                 is TrackCollection -> {
@@ -223,6 +239,7 @@ fun TrackListScreen(
                                 onCoverRect,
                                 onCoverDrawn,
                                 watermarkIcon,
+                                textAlpha = rowsAlpha,
                             ) { actionsTop = it }
                         }
                         itemsIndexed(
@@ -230,8 +247,11 @@ fun TrackListScreen(
                             key = { _, t -> t.id },
                             contentType = { _, _ -> "track" },
                         ) { index, track ->
-                            TrackRow(index, track, hPadding = 16.dp) {
-                                vm.onTrackClick(target, index)
+                            // 行随内容浮现 / 收起退场淡入淡出（draw 阶段读，不重组）。
+                            Box(Modifier.graphicsLayer { alpha = rowsAlpha.value }) {
+                                TrackRow(index, track, hPadding = 16.dp) {
+                                    vm.onTrackClick(target, index)
+                                }
                             }
                         }
                     }
@@ -239,7 +259,7 @@ fun TrackListScreen(
                 TrackListUiState.Empty -> CenteredHint("暂无曲目", MaterialTheme.colorScheme.onSurfaceVariant)
                 TrackListUiState.Error -> CenteredHint("曲目加载失败", MaterialTheme.colorScheme.error)
             }
-            if (skeletonAlpha > 0.001f) {
+            if (skeletonAlpha.value > 0.001f) {
                 TrackListSkeleton(
                     showTopBar = showTopBar,
                     coverInsetFollowsShell = coverInsetFollowsShell,
@@ -248,7 +268,7 @@ fun TrackListScreen(
                     onCoverRect = onCoverRect,
                     onCoverReady = onCoverDrawn,
                     // 叠在目标态之上淡出（draw 阶段读，不重组）。
-                    modifier = Modifier.graphicsLayer { alpha = skeletonAlpha },
+                    modifier = Modifier.graphicsLayer { alpha = skeletonAlpha.value },
                 )
             }
         }
@@ -374,6 +394,7 @@ private fun TrackListBannerHeader(
     onCoverRect: ((Rect) -> Unit)? = null,
     onCoverReady: (() -> Unit)? = null,
     watermarkIcon: ImageVector? = null,
+    textAlpha: State<Float>? = null,
     onActionsTop: (Float) -> Unit,
 ) {
     val context = LocalContext.current.applicationContext
@@ -420,13 +441,16 @@ private fun TrackListBannerHeader(
                 requestSize = 1024,
                 onLoadSuccess = onCoverReady,
                 watermarkIcon = watermarkIcon,
+                textAlpha = textAlpha,
             )
         }
         Spacer(Modifier.height(12.dp))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .onGloballyPositioned { onActionsTop(it.positionInWindow().y) },
+                .onGloballyPositioned { onActionsTop(it.positionInWindow().y) }
+                // 操作行与封面里的文本一起出场淡入（draw 阶段读，不重组）。
+                .graphicsLayer { alpha = textAlpha?.value ?: 1f },
             horizontalArrangement = Arrangement.Center,
         ) {
             CollectionActions(
