@@ -16,6 +16,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -125,10 +132,27 @@ fun NumeApp() {
     }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+        // 导航转场：克制的 fade + 4% 屏高轻位移（不与展开壳的“卡片生长”抢戏）。
+        // 旧实现无自定义转场，走库默认的长 fade，且 tab 间切换无位移反馈。
+        // 进入 220ms；退出 90ms 快速让位；pop 逆向稍慢收回。
+        // 注意 tween 泛型随上下文推断：fadeIn 是 Float，slide*Vertically 是 Int。
         NavHost(
             navController = navController,
             startDestination = Home,
             modifier = Modifier.fillMaxSize(),
+            enterTransition = {
+                fadeIn(tween(220, easing = FastOutSlowInEasing)) +
+                    slideInVertically(tween(220, easing = FastOutSlowInEasing)) { it / 24 }
+            },
+            exitTransition = { fadeOut(tween(90, easing = LinearEasing)) },
+            popEnterTransition = {
+                fadeIn(tween(220, easing = FastOutSlowInEasing)) +
+                    slideInVertically(tween(220, easing = FastOutSlowInEasing)) { -it / 24 }
+            },
+            popExitTransition = {
+                fadeOut(tween(160, easing = FastOutSlowInEasing)) +
+                    slideOutVertically(tween(160, easing = FastOutSlowInEasing)) { it / 24 }
+            },
         ) {
             composable<Home> {
                 HomeScreen(

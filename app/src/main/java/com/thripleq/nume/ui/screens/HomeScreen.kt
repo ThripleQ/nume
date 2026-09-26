@@ -1,5 +1,8 @@
 package com.thripleq.nume.ui.screens
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -42,6 +45,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -376,7 +381,7 @@ private fun PagedTrackSection(
     }
 }
 
-/** 页码点：[current] 用主色加大，其余用淡色。 */
+/** 页码点：选中主色放大，其余淡色。尺寸/颜色带 150ms 过渡 —— 翻页硬切会显得廉价。 */
 @Composable
 private fun PagerDots(pageCount: Int, current: Int) {
     Row(
@@ -388,15 +393,24 @@ private fun PagerDots(pageCount: Int, current: Int) {
     ) {
         repeat(pageCount) { i ->
             val selected = i == current
+            // 尺寸走 graphicsLayer 缩放（选中 1.16x），不逐帧重组布局尺寸。
+            // 动画值 0=未选中 1=选中，用 tween 而非 spring：页码点是状态指示，不是交互反馈。
+            val sel = remember { Animatable(if (selected) 1f else 0f) }
+            LaunchedEffect(selected) {
+                sel.animateTo(if (selected) 1f else 0f, tween(150, easing = FastOutSlowInEasing))
+            }
+            val dotColor = MaterialTheme.colorScheme.run { lerp(outlineVariant, primary, sel.value) }
             Box(
                 Modifier
                     .padding(horizontal = 3.dp)
-                    .size(if (selected) 7.dp else 6.dp)
+                    .size(6.dp)
+                    .graphicsLayer {
+                        val s = 1f + 0.16f * sel.value
+                        scaleX = s
+                        scaleY = s
+                    }
                     .clip(CircleShape)
-                    .background(
-                        if (selected) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.outlineVariant,
-                    ),
+                    .background(dotColor),
             )
         }
     }

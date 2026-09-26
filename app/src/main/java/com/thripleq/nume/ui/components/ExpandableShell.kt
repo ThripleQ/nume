@@ -3,6 +3,7 @@ package com.thripleq.nume.ui.components
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -194,6 +195,9 @@ fun ExpandableShell(
     val horizontal = remember { Animatable(0f) }
     // Hero 透明度：1 = 低清 hero 顶着，0 = 已交接给高清封面。
     val heroAlpha = remember { Animatable(1f) }
+    // 模糊半径的量化跟随态（与 heroAlpha 同步，5% 步长）：draw 阶段读不了 Animatable
+    // 到 Modifier.blur（组合期参数），量化后重组次数收敛到交接期 ~20 次，仅 hero 节点。
+    val heroBlurState = remember { derivedStateOf { (heroAlpha.value * 20f).toInt() / 20f } }
     // 暴露给内容的只读进度 State（Animatable 本身不是 State，用 derivedStateOf 包一层）。
     val horizontalState = remember { derivedStateOf { horizontal.value } }
     val verticalState = remember { derivedStateOf { vertical.value } }
@@ -212,10 +216,11 @@ fun ExpandableShell(
             settled.value = true
         } else if (hasFollowed) {
             // 从跟手态定格（progress→null）：从当前进度续跑打开动画到全屏。
+            // 续跑比点击打开快（手已有动能），但同族节奏：v300/h260。
             if (!closing && (vertical.value < 1f || horizontal.value < 1f)) {
                 coroutineScope {
-                    launch { vertical.animateTo(1f, tween(320, easing = FastOutSlowInEasing)) }
-                    launch { horizontal.animateTo(1f, tween(280, easing = FastOutSlowInEasing)) }
+                    launch { vertical.animateTo(1f, tween(300, easing = FastOutSlowInEasing)) }
+                    launch { horizontal.animateTo(1f, tween(260, easing = FastOutSlowInEasing)) }
                 }
             }
             settled.value = true
@@ -234,13 +239,14 @@ fun ExpandableShell(
     }
 
     // Hero 交接：高清封面就绪、且壳已基本展开后，hero 原地渐变淡出（数据没到就一直顶着，
-    // 不查“加载状态”，只看封面是否已绘制出来）。关闭时立刻收回 hero，让收起尾帧仍能精确缩回卡片。
+    // 不查“加载状态”，只看封面是否已绘制出来）。关闭时 hero 快速渐显顶回（120ms），
+    // 尾帧照样精确缩回卡片；snapTo 会闪（高清已交接后 hero 瞬间叠现在内容上）。
     // 等壳展开再淡出很关键：否则高清封面若本来就绪，hero 会在展开初期就消失，露出固定排版的
     // 裁切内容（看起来像没优化）。
     val ready = heroReady?.value == true
     LaunchedEffect(ready, closing) {
         when {
-            closing -> heroAlpha.snapTo(1f)
+            closing -> heroAlpha.animateTo(1f, tween(120, easing = LinearEasing))
             !ready -> Unit
             else -> {
                 snapshotFlow { horizontal.value }.first { it >= 0.98f }
@@ -255,10 +261,11 @@ fun ExpandableShell(
     }
     LaunchedEffect(closing) {
         if (closing) {
-            // 关闭：横向收窄与竖向缩回并发展开。
+            // 关闭：横竖轴并发展开。v340/h280 —— 与打开(380/320)同比例提速，
+            // 对称收尾感；旧值 h240 比打开快 25%，横向收窄显得突兀。
             coroutineScope {
-                launch { horizontal.animateTo(0f, tween(240, easing = FastOutSlowInEasing)) }
-                launch { vertical.animateTo(0f, tween(380, easing = FastOutSlowInEasing)) }
+                launch { horizontal.animateTo(0f, tween(280, easing = FastOutSlowInEasing)) }
+                launch { vertical.animateTo(0f, tween(340, easing = FastOutSlowInEasing)) }
             }
             // animateTo 返回时值已到位，但该值的画面还要等重组+绘制才落地；
             // 立即 onDismiss 会把最后一帧跳过，壳停在 vertical≈0 处（偏上）。
@@ -426,8 +433,10 @@ fun ExpandableShell(
                             translationY = lerp(0f, targetTop, vertical.value)
                             alpha = heroAlpha.value
                         }
-                        // 未交接时模糊（低清封面放大铺满，模糊掩盖像素化）；就绪后归零。
-                        .blur(if (ready) 0.dp else heroBlurDp)
+                        // 模糊半径随 heroAlpha 连续衰减（5% 量化 → 交接期最多 20 次重组，
+                        // 仅 hero 这一个小节点，代价可控；API 26 兼容）。
+                        // 就绪瞬间硬切 blur→0 会跳「糊→清晰」；与 220ms 渐隐同步淡出。
+                        .blur(heroBlurDp * heroBlurState.value)
                         // 壳只圆顶角，hero 自带四角圆角才能与卡片/终态封面吻合。
                         .clip(RoundedCornerShape(heroCornerDp)),
                 ) { heroContent() }

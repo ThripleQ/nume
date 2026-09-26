@@ -5,9 +5,11 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -557,7 +559,19 @@ fun PlayerDock(
             )
 
             // 列表详情页操作行（滚动把头部按钮顶出视口时显示）。
-            AnimatedVisibility(visible = actionVisible) {
+            // 显式 tween(180)：默认 spring 与下方导航行动画（tween）不一致，
+            // 且滚动触发的显隐要利落，弹性 spec 会有拖泥带水感。
+            AnimatedVisibility(
+                visible = actionVisible,
+                enter = expandVertically(
+                    expandFrom = Alignment.Top,
+                    animationSpec = tween(180, easing = FastOutSlowInEasing),
+                ) + fadeIn(animationSpec = tween(180, easing = FastOutSlowInEasing)),
+                exit = shrinkVertically(
+                    shrinkTowards = Alignment.Top,
+                    animationSpec = tween(180, easing = FastOutSlowInEasing),
+                ) + fadeOut(animationSpec = tween(180, easing = FastOutSlowInEasing)),
+            ) {
                 Column(Modifier.fillMaxWidth().height(actionHeight)) {
                     Box(
                         Modifier
@@ -577,10 +591,17 @@ fun PlayerDock(
             }
 
             // 分隔线 + 底部导航行：展开壳看列表时整体收起（保留迷你播放条）。
+            // 与上方操作行同 spec：展开 200ms / 收起 180ms，tween 家族统一。
             AnimatedVisibility(
                 visible = navVisible,
-                enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
-                exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
+                enter = expandVertically(
+                    expandFrom = Alignment.Top,
+                    animationSpec = tween(200, easing = FastOutSlowInEasing),
+                ) + fadeIn(animationSpec = tween(200, easing = FastOutSlowInEasing)),
+                exit = shrinkVertically(
+                    shrinkTowards = Alignment.Top,
+                    animationSpec = tween(180, easing = FastOutSlowInEasing),
+                ) + fadeOut(animationSpec = tween(180, easing = FastOutSlowInEasing)),
             ) {
                 Column(Modifier.fillMaxWidth()) {
                     // 分隔线 = 播放条与导航之间的分隔线（内缩与胶囊对齐）。
