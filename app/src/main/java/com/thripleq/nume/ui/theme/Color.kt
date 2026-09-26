@@ -2,47 +2,50 @@ package com.thripleq.nume.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Brand palette (used below API 31 where dynamic color is unavailable, and
-// as a fallback seed for the auto-generated M3 schemes).
-val Crimson = Color(0xFFC92027)          // primary — echoes the NetEase identity
-val CrimsonDark = Color(0xFF9E1D23)
-val Charcoal = Color(0xFF191A1C)
-val OffWhite = Color(0xFFF7F2F2)
-val SurfaceDark = Color(0xFF111214)
-val SurfaceLight = Color(0xFFFBF7F7)
-val TextOnDark = Color(0xFFECDFDF)
-val TextOnLight = Color(0xFF2B1D1E)
+/**
+ * 手写语义色层 —— 调色板本身**不在这里**（那是 [Palette.kt] 机器生成的），
+ * 这里只放「调色板表达不了」的一类颜色：**压在不受控内容（封面图）之上的墨色**，
+ * 以及散落的半透明常量。
+ *
+ * ## 为什么 on-image 墨色刻意不走 colorScheme
+ * 封面是不受控的位图，深浅主题色压上去都可能不可读。可读性由**图上的暗色渐变遮罩**
+ * 保证，而不是由主题保证 —— 所以这套墨色在明暗两种主题下**都是同一组白色**，
+ * 故意与 `colorScheme` 解耦。若把它们改成 `onSurface`，暗色主题没问题，
+ * 浅色主题下 `onSurface` 是深字，压在中亮度封面上直接看不清。
+ *
+ * ## 为什么这些数字要从调用点收上来
+ * 之前 `Color.White.copy(alpha = 0.88f)`、`Color.Black.copy(alpha = 0.38f)` 这类
+ * 魔数散在组件里：同一个「图上次要文字」在两个组件里可能一个是 0.88 一个是 0.8，
+ * 而且改不动。收成一个有名字的常量后，全局一处可调。
+ *
+ * 透明度 → ARGB 前缀换算：`round(a × 255)` 取十六进制（0.88→E0、0.28→47）。
+ */
+object NumeInk {
+    /** 图上主文字 / 图标（收起按钮图标、封面名）。 */
+    val OnImage = Color(0xFFFFFFFF)
 
-// Light-scheme roles (fallback, not dynamic color).
-val LightPrimary = Crimson
-val LightOnPrimary = OffWhite
-val LightPrimaryContainer = Color(0xFFFFDAD6)
-val LightOnPrimaryContainer = Color(0xFF410002)
-val LightSecondary = Color(0xFF9F5A57)
-val LightOnSecondary = Color(0xFFFFFFFF)
-val LightSecondaryContainer = Color(0xFFFFDAD6)
-val LightOnSecondaryContainer = Color(0xFF3E0010)
-val LightTertiary = Color(0xFF765849)
-val LightOnTertiary = Color(0xFF4A2F22)
-val LightTertiaryContainer = Color(0xFFFFDCC9)
-val LightOnTertiaryContainer = Color(0xFF2C170C)
-val LightSurfaceVariant = Color(0xFFF5DDDC)
-val LightOnSurfaceVariant = Color(0xFF534344)
-val LightOutline = Color(0xFF857374)
+    /** 图上次要文字（白 @88%，如封面上的曲目数）。原 `Color.White.copy(alpha=0.88f)`。 */
+    val OnImageMuted = Color(0xE0FFFFFF)
 
-// Dark-scheme roles (fallback, not dynamic color).
-val DarkPrimary = Color(0xFFFFB3AC)
-val DarkOnPrimary = Color(0xFF68000E)
-val DarkPrimaryContainer = CrimsonDark
-val DarkOnPrimaryContainer = Color(0xFFFFDAD6)
-val DarkSecondary = Color(0xFFE7BDB9)
-val DarkOnSecondary = Color(0xFF442928)
-val DarkSecondaryContainer = Color(0xFF5D3F3E)
-val DarkOnSecondaryContainer = Color(0xFFFFDAD6)
-val DarkTertiary = Color(0xFFE2BFA9)
-val DarkOnTertiary = Color(0xFF432917)
-val DarkTertiaryContainer = Color(0xFF5A3E2B)
-val DarkOnTertiaryContainer = Color(0xFFFFDCC9)
-val DarkSurfaceVariant = Color(0xFF534344)
-val DarkOnSurfaceVariant = Color(0xFFD7C3C2)
-val DarkOutline = Color(0xFFA08E8D)
+    /** 图上内容属性水印（白 @28%）。原 `Color.White.copy(alpha=0.28f)`。 */
+    val Watermark = Color(0x47FFFFFF)
+}
+
+/** 需要「跟随主题色再乘透明度」的场景：只能给 alpha，不能给固化 Color。 */
+object NumeFade {
+    /** 封面底部文字托底渐变的最暗端。原 `BigCoverVisual.scrimAlpha` 默认值。 */
+    const val IMAGE_SCRIM: Float = 0.66f
+
+    /** 缺封面兜底块上的水印图标不透明度（压在 `secondaryContainer` 上）。 */
+    const val WATERMARK_ON_CONTAINER: Float = 0.75f
+
+    /**
+     * 伸展壳展开时「壳以外」区域退暗的最大不透明度。
+     * 原 `ExpandableShell` 私有常量 `SHELL_SCRIM_ALPHA`：提到这里是为了和
+     * [CONTROL_SCRIM] 同族可调（两者都是「壳/浮层压暗背景建立 modal 焦点」的同一语义）。
+     */
+    const val SHELL_SCRIM: Float = 0.32f
+
+    /** 浮层控件圆底（收起按钮）的黑底不透明度。 */
+    const val CONTROL_SCRIM: Float = 0.38f
+}

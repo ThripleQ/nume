@@ -30,6 +30,8 @@ import coil.compose.AsyncImagePainter
 import coil.compose.rememberAsyncImagePainter
 import coil.imageLoader
 import coil.request.ImageRequest
+import com.thripleq.nume.ui.theme.NumeFade
+import com.thripleq.nume.ui.theme.NumeInk
 
 /**
  * 展开壳 hero 封面的解码尺寸（px）。小尺寸放大铺满即天然模糊，用来掩盖低清像素化——
@@ -64,7 +66,7 @@ fun BigCoverVisual(
     meta: String? = null,
     showName: Boolean = true,
     scrimTop: Float = 0.5f,
-    scrimAlpha: Float = 0.66f,
+    scrimAlpha: Float = NumeFade.IMAGE_SCRIM,
     requestSize: Int = 480,
     preloadSize: Int? = null,
     onLoadSuccess: (() -> Unit)? = null,
@@ -119,7 +121,7 @@ fun BigCoverVisual(
                     Icon(
                         watermarkIcon,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f),
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = NumeFade.WATERMARK_ON_CONTAINER),
                         modifier = Modifier.fillMaxSize(0.37f),
                     )
                 } else {
@@ -137,7 +139,7 @@ fun BigCoverVisual(
             Icon(
                 watermarkIcon,
                 contentDescription = null,
-                tint = Color.White.copy(alpha = 0.28f),
+                tint = NumeInk.Watermark,
                 modifier = Modifier.align(Alignment.Center).fillMaxSize(0.37f),
             )
         }
@@ -158,7 +160,7 @@ fun BigCoverVisual(
                 Text(
                     text = name,
                     style = MaterialTheme.typography.titleSmall,
-                    color = Color.White,
+                    color = NumeInk.OnImage,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -168,7 +170,7 @@ fun BigCoverVisual(
                 Text(
                     text = meta,
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.88f),
+                    color = NumeInk.OnImageMuted,
                     maxLines = 4,
                     overflow = TextOverflow.Ellipsis,
                 )

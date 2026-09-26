@@ -135,7 +135,45 @@ libnetease 以 `NE_USE_CURL=OFF` 编译，**不依赖 curl**。所有请求照�
 - **构建提速**：`gradle.properties` 开 configuration cache + build cache。
 - CI：GitHub Actions 在 push 到 `main`/`beta` 时构建并上传 debug APK。
 
-## 九、路线图 / 当前状态
+## 九、色彩体系（生成式调色板）
+
+**单一 seed 推导全套 M3 角色**：`tools/gen_palette.py` 改一行 `SEED` 重跑，即产出
+`ui/theme/Palette.kt`（纯字面量、标注勿手改）与全部明暗两套角色。色彩数学全部留在
+可执行、可验证的 Python 侧，Kotlin 只有常量——避免无编译环境下盲写色彩引擎。
+
+色空间用 **OKLCH**（感知均匀，tone 即 L×100），不是 Google 的 HCT/CAM16：后者需约 150 行
+实现、盲写风险不划算。色值与 Material Theme Builder 不逐位相同，但**色相协调关系与对比度
+由脚本严格验证**（所有正文色对 ≥4.5:1、次要文字 ≥3.0:1，超色域保 L/H 二分收缩彩度）。
+
+### 关键教训：M3 角色必须逐个显式传入
+`Theme.kt` 过去只传了 20 个角色，`surfaceContainer*` / `surfaceDim` / `surfaceBright` /
+`outlineVariant` / `error*` **全部漏传 → 回落 M3 内置值（带紫调的中性）**。而 App 最显眼的
+表面（dock 浮岛、伸展壳、scrim）用的恰恰是这几个角色。结果品牌是红的、主角表面是紫灰的，
+三种色相（品牌红 / 暖浅色面 / 冷蓝灰暗色面）互相打架。**"颜色不协调"的根源是漏传角色，
+不是硬编码散落**（全 app 硬编码本就集中在一个文件）。
+
+### 三条不可动摇的原则
+1. **不偷改品牌色**：浅色 `primary` 用 SEED 本色，不套 M3 惯例 tone 40（那会把
+   `#C92027` 压成 `#8B000F`）。白字压品牌红实测 5.6:1 达 AA，没有理由压暗。
+2. **不偷改明度**：暗色 `surface` 锚现网实测档（`#111214`≈tone 17 → 取 20），不用 M3 的
+   tone 6（`#020000`）——后者会把整个 App 静默调暗。这次只把**色相**从冷蓝灰拧到品牌红调。
+3. **层级不许被打平**：`on_*` 先试 M3 规范 tone（次要文字 30/80，而非极端 10/90），
+   只有对比度不达标才向大反差修正。否则 `onSurfaceVariant` 撞上 `onSurface`，主次文字同色。
+
+脚本 `verify()` 会逐对打印 PASS/FAIL 并额外检查「主次容器可区分」「主次文字可区分」
+「容器明度单调」，**不通过就拒绝写入**。
+
+### on-image 墨色与 colorScheme 刻意解耦
+封面是不受控位图，主题色压上去都可能不可读。可读性由图上暗色渐变保证，不由主题保证，
+所以 `NumeInk.*`（图上文字/水印）在明暗主题下是同一组白色。若改用 `onSurface`，浅色主题
+下深字压中亮度封面直接看不清。`NumeFade.*` 收纳必须"主题色 × 透明度"的散落的魔数。
+
+### 动态取色（Material You）
+`dynamicColor = true` 时 Android 12+ 会**整套替换**本调色板（`Palette.kt` 与 `NumeInk` 全失效）。
+`MainActivity` 当前显式传 false：一是保住品牌红，二是动态色在部分机型派生偏深的
+`onBackground`、暗色主题下文字看不清（那次修复的注释还在）。要重启先回归这两点。
+
+## 十、路线图 / 当前状态
 
 - [x] 项目骨架、主题、导航
 - [x] libnetease 子模块接入 + 原生桥（NDK/CMake、transport 注入）

@@ -53,12 +53,11 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import com.thripleq.nume.ui.theme.Motion
+import com.thripleq.nume.ui.theme.NumeFade
+import com.thripleq.nume.ui.theme.NumeInk
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.first
-
-/** 壳展开时「壳以外区域」背景退暗的最大不透明度（随展开进度渐深）。 */
-private const val SHELL_SCRIM_ALPHA = 0.32f
 
 /**
  * 壳当前展开进度（0..1）的 [State]，供内容里的浮层（如关闭按钮、banner 内缩）读取。
@@ -348,7 +347,7 @@ fun ExpandableShell(
         Box(
             Modifier
                 .fillMaxSize()
-                .graphicsLayer { alpha = SHELL_SCRIM_ALPHA * progressAnim.value }
+                .graphicsLayer { alpha = NumeFade.SHELL_SCRIM * progressAnim.value }
                 .background(Color.Black),
         )
         // 触摸拦截层（在壳之下、底下页面之上）：吃掉所有落在壳外的指针事件。
@@ -577,14 +576,14 @@ fun CoverExpandShell(
                         .size(36.dp)
                         .graphicsLayer { alpha = shellProgress.value }
                         .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.38f))
+                        .background(Color.Black.copy(alpha = NumeFade.CONTROL_SCRIM))
                         .clickable { if (shellProgress.value > 0.5f) onDismiss() },
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         Icons.Filled.KeyboardArrowDown,
                         contentDescription = "收起",
-                        tint = Color.White,
+                        tint = NumeInk.OnImage,
                         modifier = Modifier.size(24.dp),
                     )
                 }

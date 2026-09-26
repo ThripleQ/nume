@@ -14,7 +14,9 @@
 | 改迷你条 / 播放页（含手势、两段式展开） | `ui/playerbar/PlayerDock.kt` | dock + 全屏播放页合体，同一文件 |
 | 改「胶囊→全屏」通用伸展壳的动画 / 尾帧 | `ui/components/ExpandableShell.kt` | 我的页喜欢的音乐等复用；单一时间基，宽高/圆角/hero 全由同一个 t 派生 |
 | 改动画**时长 / 曲线 / 圆角节奏**（壳与 dock 共用） | `ui/theme/Motion.kt` | 动效令牌唯一来源；两处手感不一致或想整体调快调慢，只改这里 |
-| 改全 app 的配色 / 明暗主题 | `ui/theme/Color.kt`、`ui/theme/Theme.kt` | 换品牌色、跟系统昼夜 |
+| 改品牌色 / 整套配色（明暗一起变） | `tools/gen_palette.py` 的 `SEED` → 重跑生成 | **别手改 `Palette.kt`**（机器生成）；`gen_palette.py --write` 会先验 WCAG 再落盘 |
+| 改 M3 角色 → `ColorScheme` 的映射 | `ui/theme/Theme.kt` | 角色必须逐个显式传，漏传会回落 M3 内置紫灰 |
+| 改图上文字/水印/遮罩等浮层墨色 | `ui/theme/Color.kt`（`NumeInk` / `NumeFade`） | 与 colorScheme 解耦，明暗共用 |
 | 改字号、字重、字体 | `ui/theme/Type.kt` | |
 | 改底部导航胶囊：加删 tab、换图标、改顺序 | `NumeApp.kt` | 导航目的地也集中在这一个文件 |
 | 改点某处跳到哪个页面 | `NumeApp.kt` | 跳转逻辑只在这里 |

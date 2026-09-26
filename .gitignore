@@ -30,3 +30,6 @@ Thumbs.db
 *.keystore
 keystore.properties
 keystore
+# Python（tools/ 下脚本）
+__pycache__/
+*.pyc
